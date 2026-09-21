@@ -22,6 +22,8 @@ plus logcat tag `NCAL/*`:
 Logged: lifecycle, every keypress/edit with tape snapshot size, per-block evaluation
 (running total, `%` resolutions, rounding), all errors with line numbers,
 export/import (UUID, decimals, URIs), permission/storage outcomes.
+A fatal crash writes `crash-<timestamp>.log` (stack trace + last 200 log lines)
+synchronously before the process dies — always check for one first.
 
 ## `.calc` compatibility
 

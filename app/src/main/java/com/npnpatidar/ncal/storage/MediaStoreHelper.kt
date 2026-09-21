@@ -70,26 +70,52 @@ object MediaStoreHelper {
 
     // ---- internals ----
 
-    private fun findOwn(context: Context, fileName: String): Uri? {
+    /**
+     * Some devices append an extension from the MIME type on insert
+     * (`ncal-....log` becomes `ncal-....log.txt`), so look up both spellings.
+     * Prefer an exact match, fall back to the `.txt`-suffixed one.
+     */
+    fun findOwn(context: Context, fileName: String): Uri? {
         val cr = context.contentResolver
         val files = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        var fallback: Uri? = null
         cr.query(
             files,
             arrayOf(MediaStore.Downloads._ID, MediaStore.Downloads.DISPLAY_NAME),
-            "${MediaStore.Downloads.DISPLAY_NAME}=?",
-            arrayOf(fileName),
+            "${MediaStore.Downloads.DISPLAY_NAME}=? OR ${MediaStore.Downloads.DISPLAY_NAME}=?",
+            arrayOf(fileName, "$fileName.txt"),
             null,
         )?.use { c ->
-            // Prefer a row inside our folder: check relative path when available.
+            val idCol = c.getColumnIndexOrThrow(MediaStore.Downloads._ID)
+            val nameCol = c.getColumnIndexOrThrow(MediaStore.Downloads.DISPLAY_NAME)
             while (c.moveToNext()) {
-                val id = c.getLong(0)
-                return Uri.withAppendedPath(files, id.toString())
+                val uri = Uri.withAppendedPath(files, c.getLong(idCol).toString())
+                if (c.getString(nameCol) == fileName) return uri
+                if (fallback == null) fallback = uri
             }
         }
-        return null
+        return fallback
     }
 
-    private fun appendMediaStore(context: Context, fileName: String, text: String) {
+    /**
+     * Find-or-insert [fileName], append [text], and return the URI so callers
+     * can cache it and keep appending without re-querying (avoids spraying
+     * suffixed duplicates when the provider renames on insert).
+     */
+    fun appendAndGetUri(context: Context, fileName: String, text: String): Uri? {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                appendMediaStore(context, fileName, text)
+            } else {
+                appendPrivate(context, fileName, text)
+                null
+            }
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun appendMediaStore(context: Context, fileName: String, text: String): Uri? {
         val cr = context.contentResolver
         var uri = findOwn(context, fileName)
         if (uri == null) {
@@ -103,6 +129,7 @@ object MediaStoreHelper {
         }
         cr.openOutputStream(uri!!, "wa")?.use { it.write(text.toByteArray()) }
             ?: error("MediaStore append failed")
+        return uri
     }
 
     private fun writeMediaStore(context: Context, fileName: String, text: String, mime: String): Uri? {

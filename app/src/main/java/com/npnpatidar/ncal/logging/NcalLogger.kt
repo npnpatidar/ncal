@@ -1,6 +1,7 @@
 package com.npnpatidar.ncal.logging
 
 import android.content.Context
+import android.net.Uri
 import android.os.Build
 import android.util.Log
 import com.npnpatidar.ncal.storage.MediaStoreHelper
@@ -17,9 +18,12 @@ import java.util.concurrent.Executors
  * ```
  * 2026-09-21 07:10:01.123 D/NCAL/Tape key=5 tapeLines=12 total=392.00000
  * ```
- * - One file per day; if a day file exceeds ~2MB a `-N` suffix rolls over.
+ * - One file per day. The MediaStore URI is resolved once per process and
+ *   cached, so logging never sprays suffixed duplicate files.
  * - All disk I/O is off the main thread and never throws (failures go to logcat).
- * - Call [logDeviceInfo] once at startup so every log file is self-describing.
+ * - Call [installCrashHandler] first in `onCreate`: any uncaught exception is
+ *   written **synchronously** to `Download/ncal/crash-<ts>.log` (unique name, so
+ *   it always lands even when the process is dying) before the system handler runs.
  */
 object NcalLogger {
 
@@ -30,14 +34,34 @@ object NcalLogger {
     private val io = Executors.newSingleThreadExecutor()
     private val timeFmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
     private val dayFmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+    private val crashFmt = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US)
 
-    /** Ring buffer of the last events for the on-screen log viewer. */
+    /** Ring buffer of the last events (also dumped into crash logs). */
     private val ring = ArrayDeque<String>(512)
     private val ringLock = Any()
+
+    /** Per-process cache: file name -> MediaStore URI. */
+    private val uriCache = mutableMapOf<String, Uri>()
+    private val uriLock = Any()
 
     fun init(context: Context) {
         appContext = context.applicationContext
         logDeviceInfo()
+    }
+
+    /**
+     * Install first in Activity.onCreate (before [init]). Captures the full
+     * stack trace + recent log ring to Download/ncal on any fatal crash.
+     */
+    fun installCrashHandler() {
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                writeCrashFile(thread, throwable)
+            } catch (_: Throwable) {
+            }
+            previous?.uncaughtException(thread, throwable)
+        }
     }
 
     fun d(tag: String, msg: String) = log(Log.DEBUG, tag, msg)
@@ -71,7 +95,7 @@ object NcalLogger {
         if (fileLogging && ctx != null) {
             io.execute {
                 try {
-                    MediaStoreHelper.appendText(ctx, fileNameForToday(ctx), line + "\n")
+                    appendCached(ctx, dayFileName(), line + "\n")
                 } catch (t: Throwable) {
                     Log.e("NCAL/Logger", "file append failed: ${t.message}")
                 }
@@ -79,22 +103,45 @@ object NcalLogger {
         }
     }
 
-    private fun fileNameForToday(context: Context): String {
-        val base = "ncal-${dayFmt.format(Date())}.log"
-        // Size-based rollover is approximated: MediaStore has no cheap length
-        // query per owner, so check our own read-back when it gets large.
-        // Keep it simple: daily file; rollover handled by day change.
-        voidContext(context)
-        return base
+    /** Append via the cached URI; resolve+insert only on first use. */
+    private fun appendCached(context: Context, fileName: String, text: String) {
+        val uri = synchronized(uriLock) { uriCache[fileName] }
+            ?: MediaStoreHelper.appendAndGetUri(context, fileName, text)?.also { fresh ->
+                synchronized(uriLock) { uriCache[fileName] = fresh }
+                return
+            } ?: return
+        try {
+            context.contentResolver.openOutputStream(uri, "wa")?.use {
+                it.write(text.toByteArray())
+            } ?: error("append stream null")
+        } catch (t: Throwable) {
+            Log.e("NCAL/Logger", "cached append failed, re-resolving: ${t.message}")
+            synchronized(uriLock) { uriCache.remove(fileName) }
+        }
     }
 
-    private fun logDeviceInfo() {
-        i(
-            "App",
-            "start pkg=com.npnpatidar.ncal model=${Build.MANUFACTURER} ${Build.MODEL} " +
-                "sdk=${Build.VERSION.SDK_INT} release=${Build.VERSION.RELEASE}",
-        )
+    /** Synchronous crash dump. Runs on the dying thread — keep it blocking-safe. */
+    private fun writeCrashFile(thread: Thread, throwable: Throwable) {
+        val ctx = appContext
+        val header = buildString {
+            appendLine("ncal CRASH ${timeFmt.format(Date())}")
+            appendLine("thread=${thread.name}")
+            appendLine(
+                "device=${Build.MANUFACTURER} ${Build.MODEL} " +
+                    "sdk=${Build.VERSION.SDK_INT} release=${Build.VERSION.RELEASE}",
+            )
+            appendLine("--- recent log ---")
+            recent().takeLast(200).forEach { appendLine(it) }
+            appendLine("--- stack ---")
+            appendLine(Log.getStackTraceString(throwable))
+        }
+        Log.e("NCAL/Crash", header)
+        if (ctx != null) {
+            val name = "crash-${crashFmt.format(Date())}.log"
+            // Unique name each time: plain insert, no lookup needed.
+            MediaStoreHelper.writeText(ctx, name, header, "text/plain")
+        }
     }
 
-    private fun voidContext(@Suppress("UNUSED_PARAMETER") c: Context) = Unit
+    private fun dayFileName(): String = "ncal-${dayFmt.format(Date())}.log"
 }

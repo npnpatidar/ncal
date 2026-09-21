@@ -10,9 +10,17 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Crash handler first: any fatal after this point lands in
+        // Download/ncal/crash-<ts>.log with the full stack trace.
+        NcalLogger.installCrashHandler()
         NcalLogger.init(this)
         NcalLogger.i("App", "onCreate")
-        setContent { TapeScreen() }
+        try {
+            setContent { TapeScreen() }
+        } catch (t: Throwable) {
+            NcalLogger.e("App", "setContent failed", t)
+            throw t
+        }
     }
 
     override fun onResume() {

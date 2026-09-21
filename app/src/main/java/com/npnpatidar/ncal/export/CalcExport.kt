@@ -37,7 +37,9 @@ object CalcExport {
             eval.subtotals,
         )
         val fileName = sanitize(docName) + ".calc"
-        val uri = MediaStoreHelper.writeText(context, fileName, text)
+        // NOTE: NOT text/plain — some devices append ".txt" to text/plain
+        // display names on insert, which would break the .calc extension.
+        val uri = MediaStoreHelper.writeText(context, fileName, text, "application/octet-stream")
         NcalLogger.i("Export", "wrote $fileName uri=$uri bytes=${text.length}")
         return uri
     }
