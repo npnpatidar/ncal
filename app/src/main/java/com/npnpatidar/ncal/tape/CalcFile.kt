@@ -103,6 +103,9 @@ object CalcFile {
      * Canonical writer. [balances] supplies the evaluated running total for each
      * [TapeLine.Balance] in order (see [TapeEvaluator.subtotals]); entries and
      * comments round-trip verbatim.
+     *
+     * Trailing blank lines are normalized to exactly two, so export is
+     * idempotent: `parse(write(d))` re-exports byte-identically.
      */
     fun write(doc: TapeDoc, balances: List<java.math.BigDecimal>): String {
         val m = doc.meta
@@ -123,7 +126,8 @@ object CalcFile {
         )
         val body = mutableListOf<String>()
         var bi = 0
-        for (line in doc.lines) {
+        val core = doc.lines.dropLastWhile { it is TapeLine.Blank }
+        for (line in core) {
             when (line) {
                 is TapeLine.Entry -> body.add(formatEntry(line.op, line.amount, line.isPercent, line.comment, m))
                 is TapeLine.Separator -> body.add(SEPARATOR)

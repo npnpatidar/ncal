@@ -117,7 +117,7 @@ VARINFO=
         assertEquals(" +         45.00000 hdfc", CalcFile.formatEntry('+', BigDecimal("45"), false, "hdfc", meta))
         assertEquals(" -        155.00000 mohan anytime", CalcFile.formatEntry('-', BigDecimal("155"), false, "mohan anytime", meta))
         assertEquals(" +        456.00000 ", CalcFile.formatEntry('+', BigDecimal("456"), false, "", meta))
-        assertEquals(" ------------------  ", CalcFile.SEPARATOR)
+        assertEquals(" ------------------ ", CalcFile.SEPARATOR)
         assertEquals(20, " +        456.00000 ".length)
         assertEquals(20, CalcFile.SEPARATOR.length)
     }
@@ -130,6 +130,16 @@ VARINFO=
         // Body (everything after the header) must be byte-identical.
         val bodyOf = { t: String -> t.substringAfter("</SFRCalculatorHeader>\n") }
         assertEquals(bodyOf(LEDGER), bodyOf(out))
+    }
+
+    @Test
+    fun exportIsIdempotent() {
+        val doc = CalcFile.parse(LEDGER)
+        val eval = TapeEvaluator.evaluate(doc.lines, doc.meta.decimals)
+        val once = CalcFile.write(doc, eval.subtotals)
+        val doc2 = CalcFile.parse(once)
+        val eval2 = TapeEvaluator.evaluate(doc2.lines, doc2.meta.decimals)
+        assertEquals(once, CalcFile.write(doc2, eval2.subtotals))
     }
 
     @Test
