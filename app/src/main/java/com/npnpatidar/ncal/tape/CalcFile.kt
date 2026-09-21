@@ -22,7 +22,8 @@ object CalcFile {
 
     private val entryRe = Regex("""^\s*([+\-*/^])\s*(.*)$""")
     private val numberHeadRe = Regex("""^([0-9][0-9.,]*)(%?)\s?(.*)$""")
-    private val separatorRe = Regex("""^ -{2,} ?$""")
+    private val separatorRe = Regex("""^\s*-{2,}\s?$""")
+    private val bareRe = Regex("""^([0-9][0-9.,]*%?)(\s.*)?$""")
     private val headingRe = Regex("""^(#+)\s?(.*)$""")
 
     fun parse(text: String): TapeDoc {
@@ -55,7 +56,7 @@ object CalcFile {
             val ln = raw
             when {
                 ln.isEmpty() -> lines.add(TapeLine.Blank)
-                separatorRe.matches(ln.trimEnd()) && ln.trim().startsWith("-") ->
+                separatorRe.matches(ln) ->
                     lines.add(TapeLine.Separator)
                 ln.trim().startsWith("#") -> {
                     val m = headingRe.matchEntire(ln.trim())!!
@@ -82,7 +83,7 @@ object CalcFile {
                             lines.add(TapeLine.Comment(ln))
                         }
                     } else {
-                        lines.add(TapeLine.Comment(ln))
+                        lines.add(parseBareOrComment(ln, meta, warnMsgs, idx))
                     }
                 }
             }
@@ -159,5 +160,28 @@ object CalcFile {
         else s = s.replace(",", "")
         if (meta.decSep != '.') s = s.replace(meta.decSep, '.')
         return s
+    }
+
+    /**
+     * Bare number without an operator (`78`, `78 lunch`): implied `+`, so
+     * plain typing in the notepad just works. Guarded: digits must end or be
+     * followed by whitespace, so dates like `2026-09-21` stay comments.
+     */
+    private fun parseBareOrComment(
+        ln: String,
+        meta: CalcMeta,
+        warnMsgs: MutableList<String>,
+        idx: Int,
+    ): TapeLine {
+        val bm = bareRe.matchEntire(ln.trim()) ?: return TapeLine.Comment(ln)
+        var digits = bm.groupValues[1]
+        val isPercent = digits.endsWith("%")
+        if (isPercent) digits = digits.dropLast(1)
+        val amount = normalizeNumber(digits, meta).toBigDecimalOrNull()
+        if (amount == null) {
+            warnMsgs.add("line ${idx + 1}: bad number, kept as comment")
+            return TapeLine.Comment(ln)
+        }
+        return TapeLine.Entry('+', amount, isPercent, bm.groupValues[2].trim())
     }
 }

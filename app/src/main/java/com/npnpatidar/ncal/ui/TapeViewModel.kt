@@ -9,6 +9,7 @@ import com.npnpatidar.ncal.storage.NotesRepository
 import com.npnpatidar.ncal.tape.CalcFile
 import com.npnpatidar.ncal.tape.CalcMeta
 import com.npnpatidar.ncal.tape.TapeEvaluator
+import com.npnpatidar.ncal.tape.TapeFormatter
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,7 +20,7 @@ import kotlinx.coroutines.launch
 import java.math.BigDecimal
 import java.math.RoundingMode
 
-enum class KeypadMode { CALC, SYSTEM }
+enum class KeypadMode { CALC, SYSTEM, HIDDEN }
 
 data class TapeUiState(
     val tapeText: String = " + 0\n",
@@ -117,7 +118,7 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
             meta = res.meta
             _state.update {
                 it.copy(
-                    tapeText = res.tapeText,
+                    tapeText = TapeFormatter.pretty(res.tapeText, res.meta.decimals),
                     decimals = res.meta.decimals,
                     notes = notes,
                     noteId = id,
@@ -174,14 +175,20 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         scheduleSave()
     }
 
-    /** `=`: close the block — append separator + recomputed balance line. */
+    /** `=`: close the block — append separator + recomputed balance line,
+     * then re-layout the tape in 3 left-aligned columns. */
     fun equals() {
+        // NOTE: no trailing newline — parse() would turn it into a Blank line,
+        // which resets the open section and made `=` append a 0.00000 balance.
         val cur = _state.value.tapeText.trimEnd()
         pushUndo(_state.value.tapeText)
-        val doc = CalcFile.parse(cur + "\n")
+        val doc = CalcFile.parse(cur)
         val eval = TapeEvaluator.evaluate(doc.lines, doc.meta.decimals)
         val bal = CalcFile.formatEntry('+', eval.openTotal, false, "", doc.meta)
-        val next = "$cur\n${CalcFile.SEPARATOR}\n$bal\n"
+        val next = TapeFormatter.pretty(
+            "$cur\n${CalcFile.SEPARATOR}\n$bal",
+            doc.meta.decimals,
+        )
         _state.update { it.copy(tapeText = next) }
         NcalLogger.i("Tape", "equals total=${eval.openTotal} subs=${eval.subtotals.size}")
         reevaluate("equals")
@@ -267,7 +274,12 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         pushUndo(_state.value.tapeText)
         val res = CalcExport.importToTapeText(text)
         meta = res.meta
-        _state.update { it.copy(tapeText = res.tapeText, decimals = res.meta.decimals) }
+        _state.update {
+            it.copy(
+                tapeText = TapeFormatter.pretty(res.tapeText, res.meta.decimals),
+                decimals = res.meta.decimals,
+            )
+        }
         NcalLogger.i("Tape", "imported grand=${res.grandTotal}")
         reevaluate("import")
         scheduleSave()

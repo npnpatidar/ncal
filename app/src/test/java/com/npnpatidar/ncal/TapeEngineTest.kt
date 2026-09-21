@@ -3,6 +3,7 @@ package com.npnpatidar.ncal
 import com.npnpatidar.ncal.tape.CalcFile
 import com.npnpatidar.ncal.tape.CalcMeta
 import com.npnpatidar.ncal.tape.TapeEvaluator
+import com.npnpatidar.ncal.tape.TapeFormatter
 import com.npnpatidar.ncal.tape.TapeLine
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -155,5 +156,53 @@ VARINFO=
         val eval = TapeEvaluator.evaluate(doc.lines, 2)
         assertTrue(eval.errors.isEmpty())
         assertEquals(BigDecimal("15.00"), eval.grandTotal.setScale(2))
+    }
+
+    @Test
+    fun prettyLaysOutThreeLeftAlignedColumns() {
+        val pretty = TapeFormatter.pretty(
+            " + 10.00 alpha\n + 2.50 b\n ------------------ \n + 12.50 \n",
+            2,
+        )
+        assertEquals(
+            "+ 10.00  alpha\n+ 2.50   b\n ------------------ \n+ 12.50\n",
+            pretty,
+        )
+    }
+
+    @Test
+    fun prettyKeepsMathIdentical() {
+        val canonical = " + 45.00000 hdfc\n + 119.00000 bob\n ------------------ \n + 164.00000 \n"
+        val pretty = TapeFormatter.pretty(canonical, 5)
+        val a = TapeEvaluator.evaluate(CalcFile.parse(canonical).lines, 5)
+        val b = TapeEvaluator.evaluate(CalcFile.parse(pretty).lines, 5)
+        assertTrue(b.errors.isEmpty())
+        assertEquals(a.grandTotal, b.grandTotal)
+        assertEquals(a.subtotals, b.subtotals)
+    }
+
+    @Test
+    fun bareNumberHasImpliedPlus() {
+        val doc = CalcFile.parse("78 lunch\n + 22\n")
+        assertTrue(doc.warnings.isEmpty())
+        val eval = TapeEvaluator.evaluate(doc.lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertEquals(BigDecimal("100"), eval.grandTotal.stripTrailingZeros())
+    }
+
+    @Test
+    fun dateLikeLineStaysComment() {
+        val doc = CalcFile.parse("2026-09-21\n + 1\n")
+        val eval = TapeEvaluator.evaluate(doc.lines, 2)
+        assertEquals(BigDecimal("1"), eval.grandTotal.stripTrailingZeros())
+    }
+
+    @Test
+    fun plainDashSeparatorClosesBlock() {
+        val doc = CalcFile.parse(" + 5\n------------------\n + 3\n")
+        val eval = TapeEvaluator.evaluate(doc.lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertEquals(listOf(BigDecimal("5.00")), eval.subtotals.map { it.setScale(2) })
+        assertEquals(BigDecimal("8.00"), eval.grandTotal.setScale(2))
     }
 }

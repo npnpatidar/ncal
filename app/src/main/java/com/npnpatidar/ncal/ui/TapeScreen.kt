@@ -141,25 +141,29 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                     modifier = Modifier.fillMaxSize().padding(pad).padding(horizontal = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    // Notepad (editable area). In calculator mode the system
-                    // keyboard is suppressed so the 4x5 keypad owns input.
+                    // Notepad (editable area). Outside SYSTEM mode the field is
+                    // read-only AND detached from the input service, so tapping
+                    // it only moves the cursor — only ABC ever raises the
+                    // system keyboard. All input then comes from the keypad.
+                    val systemMode = state.keypadMode == KeypadMode.SYSTEM
                     val tapeField: @Composable () -> Unit = {
                         OutlinedTextField(
                             value = state.tapeText,
                             onValueChange = vm::onTapeChange,
                             modifier = Modifier.fillMaxWidth().weight(1f),
+                            readOnly = !systemMode,
                             textStyle = MaterialTheme.typography.bodyLarge.copy(
                                 fontFamily = FontFamily.Monospace,
                             ),
                             label = { Text("notepad — op amount comment per line") },
                         )
                     }
-                    if (state.keypadMode == KeypadMode.CALC) {
+                    if (systemMode) {
+                        tapeField()
+                    } else {
                         CompositionLocalProvider(LocalTextInputService provides null) {
                             tapeField()
                         }
-                    } else {
-                        tapeField()
                     }
 
                     if (state.errors.isNotEmpty()) {
@@ -170,7 +174,8 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                         )
                     }
 
-                    // Middle strip: calculator keyboard | normal keyboard | total.
+                    // Middle strip: exactly one of calculator keypad / normal
+                    // keyboard / hidden is active, then the running total.
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -184,6 +189,10 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                             onClick = { vm.setKeypadMode(KeypadMode.SYSTEM) },
                             enabled = state.keypadMode != KeypadMode.SYSTEM,
                         ) { Text("ABC") }
+                        OutlinedButton(
+                            onClick = { vm.setKeypadMode(KeypadMode.HIDDEN) },
+                            enabled = state.keypadMode != KeypadMode.HIDDEN,
+                        ) { Text("Hide") }
                         Text(
                             state.totalText,
                             style = MaterialTheme.typography.headlineSmall,
@@ -237,6 +246,7 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
  * 4 columns x 5 rows = 20 buttons:
  * AC (clears whole notepad), undo, backspace, %, =,
  * digits 0-9 + ".", and + - x (multiply) ÷ (divide).
+ * Last column top to bottom: divide, multiply, subtract, add, equals.
  */
 @Composable
 private fun KeypadGrid(
@@ -252,23 +262,23 @@ private fun KeypadGrid(
         "AC" to onClear,
         "undo" to onUndo,
         "⌫" to onBackspace,
-        "%" to { onOp("% ") },
+        "÷" to { onOp("\n / ") },
         "7" to { onDigit("7") },
         "8" to { onDigit("8") },
         "9" to { onDigit("9") },
-        "÷" to { onOp("\n / ") },
+        "×" to { onOp("\n * ") },
         "4" to { onDigit("4") },
         "5" to { onDigit("5") },
         "6" to { onDigit("6") },
-        "×" to { onOp("\n * ") },
+        "−" to { onOp("\n - ") },
         "1" to { onDigit("1") },
         "2" to { onDigit("2") },
         "3" to { onDigit("3") },
-        "−" to { onOp("\n - ") },
+        "+" to { onOp("\n + ") },
         "0" to { onDigit("0") },
         "." to { onDigit(".") },
+        "%" to { onOp("% ") },
         "=" to onEquals,
-        "+" to { onOp("\n + ") },
     )
     LazyVerticalGrid(
         columns = GridCells.Fixed(4),
