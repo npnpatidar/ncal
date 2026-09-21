@@ -36,17 +36,17 @@ VARINFO=
  +         45.00000 alpha
  +        119.00000 beta
  +        292.00000 gamma
- ------------------
- +        456.00000
+ ------------------ 
+ +        456.00000 
  -        155.00000 delta
- ------------------
- +        301.00000
+ ------------------ 
+ +        301.00000 
  -          8.00000 epsilon
- ------------------
- +        293.00000
+ ------------------ 
+ +        293.00000 
  +         99.00000 zeta
- ------------------
- +        392.00000
+ ------------------ 
+ +        392.00000 
 """.trimIndent() + "\n\n\n"
 
     @Test
@@ -117,7 +117,7 @@ VARINFO=
         assertEquals(" +         45.00000 hdfc", CalcFile.formatEntry('+', BigDecimal("45"), false, "hdfc", meta))
         assertEquals(" -        155.00000 mohan anytime", CalcFile.formatEntry('-', BigDecimal("155"), false, "mohan anytime", meta))
         assertEquals(" +        456.00000 ", CalcFile.formatEntry('+', BigDecimal("456"), false, "", meta))
-        assertEquals(" ------------------ ", CalcFile.SEPARATOR)
+        assertEquals(" ------------------  ", CalcFile.SEPARATOR)
         assertEquals(20, " +        456.00000 ".length)
         assertEquals(20, CalcFile.SEPARATOR.length)
     }
