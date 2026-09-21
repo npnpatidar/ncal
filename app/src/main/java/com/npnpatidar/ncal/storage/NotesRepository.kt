@@ -35,7 +35,9 @@ class NotesRepository(private val context: Context) {
             ?.filter { it.extension == "calc" && known.none { n -> n.id == it.nameWithoutExtension } }
             ?.sortedBy { it.lastModified() }
             ?.forEach { known.add(NoteMeta(it.nameWithoutExtension, it.nameWithoutExtension)) }
-        return known
+        // Defensive: duplicate ids (e.g. from an early create/persist race) would
+        // crash LazyColumn keys, so collapse them — first occurrence wins.
+        return known.distinctBy { it.id }
     }
 
     fun lastOpen(): String? = prefs.getString(KEY_LAST, null)
@@ -49,7 +51,9 @@ class NotesRepository(private val context: Context) {
         val id = UUID.randomUUID().toString()
         val clean = name.ifBlank { "Note" }.take(64)
         file(id).writeText(CalcFile.write(TapeDoc(CalcMeta(), emptyList()), emptyList()))
-        persist(list() + NoteMeta(id, clean))
+        // Filter first: list() would adopt the just-written file as an orphan,
+        // which would persist the id twice without this.
+        persist(list().filter { it.id != id } + NoteMeta(id, clean))
         NcalLogger.i("Notes", "created id=$id name=$clean")
         return id
     }
@@ -92,8 +96,9 @@ class NotesRepository(private val context: Context) {
     }
 
     private fun persist(metas: List<NoteMeta>) {
-        val ed = prefs.edit().putString(KEY_ORDER, metas.joinToString(",") { it.id })
-        metas.forEach { ed.putString(KEY_NAME + it.id, it.name) }
+        val deduped = metas.distinctBy { it.id }
+        val ed = prefs.edit().putString(KEY_ORDER, deduped.joinToString(",") { it.id })
+        deduped.forEach { ed.putString(KEY_NAME + it.id, it.name) }
         ed.apply()
     }
 
