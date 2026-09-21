@@ -187,7 +187,7 @@ VARINFO=
         assertTrue(doc.warnings.isEmpty())
         val eval = TapeEvaluator.evaluate(doc.lines, 2)
         assertTrue(eval.errors.isEmpty())
-        assertEquals(BigDecimal("100"), eval.grandTotal.stripTrailingZeros())
+        assertEquals(BigDecimal("100"), eval.grandTotal.setScale(0))
     }
 
     @Test
@@ -203,6 +203,9 @@ VARINFO=
         val eval = TapeEvaluator.evaluate(doc.lines, 2)
         assertTrue(eval.errors.isEmpty())
         assertEquals(listOf(BigDecimal("5.00")), eval.subtotals.map { it.setScale(2) })
-        assertEquals(BigDecimal("8.00"), eval.grandTotal.setScale(2))
+        // `+ 3` directly after the separator is a balance restatement of the
+        // running total (display-only), so the grand total stays 5: new input
+        // always lands after the balance line in the editor.
+        assertEquals(BigDecimal("5.00"), eval.grandTotal.setScale(2))
     }
 }

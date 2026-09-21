@@ -62,11 +62,13 @@ object TapeEvaluator {
                 }
                 is TapeLine.Balance -> {
                     flushBlock()
-                    val shown = line.value.setScale(decimals, RoundingMode.HALF_UP)
-                    val actual = running.setScale(decimals, RoundingMode.HALF_UP)
-                    if (shown.compareTo(actual) != 0) {
-                        errors.add("WARN line ${index + 1}: file subtotal $shown != recomputed $actual")
-                    }
+                    // A `+X` line directly after a separator is a computed
+                    // restatement, never input: the editor only ever creates
+                    // such lines via `=` (with the recomputed value), and new
+                    // keypad input always lands after the balance line, so it
+                    // is parsed as a normal entry. A stale value (hand-edited
+                    // file) is silently replaced by the recomputed running
+                    // total and healed on the next save — never an error.
                     results.add(LineResult(index, running, null))
                 }
                 is TapeLine.Blank -> {
