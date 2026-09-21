@@ -144,4 +144,12 @@ object NcalLogger {
     }
 
     private fun dayFileName(): String = "ncal-${dayFmt.format(Date())}.log"
+
+    private fun logDeviceInfo() {
+        i(
+            "App",
+            "start pkg=com.npnpatidar.ncal model=${Build.MANUFACTURER} ${Build.MODEL} " +
+                "sdk=${Build.VERSION.SDK_INT} release=${Build.VERSION.RELEASE}",
+        )
+    }
 }
