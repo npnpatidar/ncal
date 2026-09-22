@@ -70,6 +70,7 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
     val scope = rememberCoroutineScope()
     var renameOpen by remember { mutableStateOf(false) }
     var renameText by remember { mutableStateOf("") }
+    var pendingDelete by remember { mutableStateOf<com.npnpatidar.ncal.storage.NotesRepository.NoteMeta?>(null) }
 
     LaunchedEffect(state.message) {
         state.message?.let {
@@ -98,7 +99,7 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                                     scope.launch { drawerState.close() }
                                 },
                                 badge = {
-                                    IconButton(onClick = { vm.deleteNote(note.id) }) {
+                                    IconButton(onClick = { pendingDelete = note }) {
                                         Icon(Icons.Filled.Delete, contentDescription = "Delete note")
                                     }
                                 },
@@ -113,6 +114,11 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                     TextButton(onClick = { vm.toggleTheme() }) {
                         Text(if (state.darkTheme) "Light theme" else "Dark theme")
                     }
+                    Text(
+                        "ncal ${state.appVersion}",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(16.dp),
+                    )
                 }
             },
         ) {
@@ -236,6 +242,27 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                 },
                 dismissButton = {
                     TextButton(onClick = { renameOpen = false }) { Text("Cancel") }
+                },
+            )
+        }
+
+        val doomed = pendingDelete
+        if (doomed != null) {
+            AlertDialog(
+                onDismissRequest = { pendingDelete = null },
+                title = { Text("Delete note?") },
+                text = { Text("\"${doomed.name}\" and all its lines will be gone. This cannot be undone.") },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            vm.deleteNote(doomed.id)
+                            pendingDelete = null
+                            scope.launch { drawerState.close() }
+                        },
+                    ) { Text("Delete") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingDelete = null }) { Text("Keep") }
                 },
             )
         }

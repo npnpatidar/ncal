@@ -35,6 +35,7 @@ data class TapeUiState(
     val noteId: String = "",
     val noteName: String = "",
     val keypadMode: KeypadMode = KeypadMode.CALC,
+    val appVersion: String = "",
 )
 
 /**
@@ -52,10 +53,16 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
     private val undoStack = ArrayDeque<String>(50)
     private val redoStack = ArrayDeque<String>(50)
     private var meta: CalcMeta = CalcMeta()
+    // Display decimals are VM state, NOT re-parsed: the on-screen tape has no
+    // header, so adopting parse defaults here would reset them every keystroke.
+    private var decimals: Int = 5
     private var saveJob: Job? = null
 
     init {
         NcalLogger.i("Tape", "ViewModel init")
+        @Suppress("DEPRECATION")
+        val pkg = app.packageManager.getPackageInfo(app.packageName, 0)
+        _state.update { it.copy(appVersion = "v${pkg.versionName} (${pkg.versionCode})") }
         var metas = repo.list()
         if (metas.isEmpty()) {
             repo.create("Note 1")
@@ -116,6 +123,7 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         val name = notes.firstOrNull { it.id == id }?.name ?: "Note"
         if (res != null) {
             meta = res.meta
+            decimals = res.meta.decimals
             _state.update {
                 it.copy(
                     tapeText = TapeFormatter.pretty(res.tapeText, res.meta.decimals),
@@ -182,15 +190,17 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         // which resets the open section and made `=` append a 0.00000 balance.
         val cur = _state.value.tapeText.trimEnd()
         pushUndo(_state.value.tapeText)
+        NcalLogger.d("Tape", "equals before: ${snapshot(cur)}")
         val doc = CalcFile.parse(cur)
-        val eval = TapeEvaluator.evaluate(doc.lines, doc.meta.decimals)
-        val bal = CalcFile.formatEntry('+', eval.openTotal, false, "", doc.meta)
+        val eval = TapeEvaluator.evaluate(doc.lines, decimals)
+        val bal = CalcFile.formatEntry('+', eval.openTotal, false, "", doc.meta.copy(decimals = decimals))
         val next = TapeFormatter.pretty(
             "$cur\n${CalcFile.SEPARATOR}\n$bal",
-            doc.meta.decimals,
+            decimals,
         )
         _state.update { it.copy(tapeText = next) }
         NcalLogger.i("Tape", "equals total=${eval.openTotal} subs=${eval.subtotals.size}")
+        NcalLogger.d("Tape", "equals after: ${snapshot(next)}")
         reevaluate("equals")
         scheduleSave()
     }
@@ -249,9 +259,10 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setDecimals(d: Int) {
-        meta = meta.copy(decimals = d.coerceIn(0, 8))
-        _state.update { it.copy(decimals = meta.decimals) }
-        NcalLogger.i("Tape", "decimals=$d")
+        decimals = d.coerceIn(0, 8)
+        meta = meta.copy(decimals = decimals)
+        _state.update { it.copy(decimals = decimals) }
+        NcalLogger.i("Tape", "decimals=$decimals")
         reevaluate("decimals")
         scheduleSave()
     }
@@ -274,6 +285,7 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         pushUndo(_state.value.tapeText)
         val res = CalcExport.importToTapeText(text)
         meta = res.meta
+        decimals = res.meta.decimals
         _state.update {
             it.copy(
                 tapeText = TapeFormatter.pretty(res.tapeText, res.meta.decimals),
@@ -297,14 +309,13 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun currentTotal(): BigDecimal {
         val doc = CalcFile.parse(_state.value.tapeText)
-        return TapeEvaluator.evaluate(doc.lines, doc.meta.decimals).grandTotal
+        return TapeEvaluator.evaluate(doc.lines, decimals).grandTotal
     }
 
     private fun reevaluate(why: String) {
         val text = _state.value.tapeText
         val doc = CalcFile.parse(text)
-        meta = doc.meta
-        val eval = TapeEvaluator.evaluate(doc.lines, doc.meta.decimals)
+        val eval = TapeEvaluator.evaluate(doc.lines, decimals)
         for (w in doc.warnings) NcalLogger.w("Tape", "import: $w")
         for (e in eval.errors) NcalLogger.w("Tape", "eval: $e")
         NcalLogger.d(
@@ -317,7 +328,7 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
                 totalText = fmt(eval.grandTotal),
                 grandText = fmt(eval.grandTotal),
                 errors = eval.errors,
-                decimals = doc.meta.decimals,
+                decimals = decimals,
             )
         }
     }
@@ -337,7 +348,13 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun fmt(v: BigDecimal): String =
-        v.setScale(_state.value.decimals, RoundingMode.HALF_UP).toPlainString()
+        v.setScale(decimals, RoundingMode.HALF_UP).toPlainString()
+
+    /** Single-line, capped snapshot of tape text for debug logs. */
+    private fun snapshot(text: String): String {
+        val oneLine = text.replace("\n", "\\n")
+        return "len=${text.length} <${oneLine.take(1500)}>"
+    }
 
     private fun pushUndo(text: String) {
         undoStack.addLast(text)
