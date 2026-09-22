@@ -282,7 +282,6 @@ VARINFO=
             TapeFormatter.pretty(" + 5\n - 12\n ------------------ \n - 7.00\n", 2),
         )
     }
-}
 
     @Test
     fun groupingWesternAndIndian() {
