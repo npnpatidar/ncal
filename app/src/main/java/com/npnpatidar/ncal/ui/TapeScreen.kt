@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -55,6 +56,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -130,6 +132,15 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
         ThemeMode.LIGHT -> false
         ThemeMode.DARK -> true
         ThemeMode.SYSTEM -> isSystemInDarkTheme()
+    }
+    // Edge-to-edge status bar: dark icons on light theme, light icons on dark.
+    val view = LocalView.current
+    SideEffect {
+        val window = (view.context as? android.app.Activity)?.window
+        if (window != null) {
+            androidx.core.view.WindowCompat.getInsetsController(window, view)
+                .isAppearanceLightStatusBars = !dark
+        }
     }
     MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
         ModalNavigationDrawer(
@@ -390,7 +401,7 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
 @Composable
 private fun BottomPinnedControls(vm: TapeViewModel, state: TapeUiState) {
     val st = state.settings
-    Column(modifier = Modifier.fillMaxWidth().imePadding()) {
+    Column(modifier = Modifier.fillMaxWidth().navigationBarsPadding().imePadding()) {
         HorizontalDivider()
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
@@ -409,12 +420,13 @@ private fun BottomPinnedControls(vm: TapeViewModel, state: TapeUiState) {
                 onClick = { vm.setKeypadMode(KeypadMode.HIDDEN) },
                 enabled = state.keypadMode != KeypadMode.HIDDEN,
             ) { Text("Hide") }
-            Text(
-                state.totalText,
-                style = MaterialTheme.typography.headlineSmall,
-                textAlign = TextAlign.End,
-                modifier = Modifier.weight(1f),
-            )
+                        Text(
+                            state.totalText,
+                            style = MaterialTheme.typography.headlineSmall,
+                            textAlign = TextAlign.End,
+                            maxLines = 1,
+                            modifier = Modifier.weight(1f),
+                        )
         }
 
         val landscape = LocalConfiguration.current.orientation ==
