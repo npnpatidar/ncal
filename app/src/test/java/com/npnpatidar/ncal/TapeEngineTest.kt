@@ -467,4 +467,60 @@ VARINFO=
         val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 200\n / 0%\n").lines, 2)
         assertTrue(eval.errors.any { it.contains("division by zero") })
     }
+
+    @Test
+    fun commaDecimalReadsAsDecimal() {
+        // "3,50" is three-fifty, not 350 (was 350 before the fix).
+        val eval = TapeEvaluator.evaluate(CalcFile.parse("3,50\n").lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertEquals(BigDecimal("3.50"), eval.grandTotal.setScale(2))
+    }
+
+    @Test
+    fun germanFullFormatReadsCorrectly() {
+        // "1.234,56" via header separators: 1234.56 (was 1.23456: the old
+        // order stripped the decimal comma before converting it).
+        val text = "<SFRCalculatorHeader>\nDECIMALS=2\nDECSEP=,\nTHOUSEP=.\n</SFRCalculatorHeader>\n1.234,56\n"
+        val doc = CalcFile.parse(text)
+        assertEquals(',', doc.meta.decSep)
+        assertEquals('.', doc.meta.thouSep)
+        val eval = TapeEvaluator.evaluate(doc.lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertEquals(BigDecimal("1234.56"), eval.grandTotal.setScale(2))
+    }
+
+    @Test
+    fun germanGroupingOnlyReadsCorrectly() {
+        val text = "<SFRCalculatorHeader>\nDECIMALS=2\nDECSEP=,\nTHOUSEP=.\n</SFRCalculatorHeader>\n1.234\n"
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(text).lines, 2)
+        assertEquals(BigDecimal("1234"), eval.grandTotal.stripTrailingZeros())
+    }
+
+    @Test
+    fun thousandGroupingStaysGrouping() {
+        // "1,000" (3 trailing digits) is grouping, not decimal.
+        val eval = TapeEvaluator.evaluate(CalcFile.parse("1,000\n").lines, 2)
+        assertEquals(BigDecimal("1000"), eval.grandTotal.stripTrailingZeros())
+    }
+
+    @Test
+    fun indianGroupingStaysGrouping() {
+        val eval = TapeEvaluator.evaluate(CalcFile.parse("10,00,000\n").lines, 2)
+        assertEquals(BigDecimal("1000000"), eval.grandTotal.stripTrailingZeros())
+    }
+
+    @Test
+    fun ambiguousShortCommaReadsDecimal() {
+        // Documented trade-off: "1,00" reads as 1.00 (European decimal),
+        // not 100 (Indian shorthand).
+        val eval = TapeEvaluator.evaluate(CalcFile.parse("1,00\n").lines, 2)
+        assertEquals(BigDecimal("1.00"), eval.grandTotal.setScale(2))
+    }
+
+    @Test
+    fun spacedSignNumber() {
+        // "+ - 2" (sign separated by space) still means -2.
+        val eval = TapeEvaluator.evaluate(CalcFile.parse("+ - 2\n").lines, 2)
+        assertEquals(BigDecimal("-2"), eval.grandTotal.stripTrailingZeros())
+    }
 }

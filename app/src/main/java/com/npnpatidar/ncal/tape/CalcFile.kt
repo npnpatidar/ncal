@@ -175,11 +175,33 @@ object CalcFile {
     }
 
     private fun normalizeNumber(raw: String, meta: CalcMeta): String {
-        var s = raw.replace(" ", "")
-        if (meta.thouSep != '.') s = s.replace(meta.thouSep.toString(), "")
-        else s = s.replace(",", "")
-        if (meta.decSep != '.') s = s.replace(meta.decSep, '.')
-        return s
+        val nospace = raw.replace(" ", "")
+        if (meta.decSep == '.' && meta.thouSep == ',') {
+            // Default/US meta, smart comma handling:
+            // - "3,50" or German "1.234,56" (comma + trailing digits) use the
+            //   comma as the decimal point (fixes 100x silent errors);
+            // - anything else treats commas as grouping ("1,000" -> 1000,
+            //   "10,00,000" -> 1000000, "1,2,3" -> 123).
+            // Known trade-off: ambiguous "1,00" reads as 1.00, not 100.
+            if (nospace.matches(Regex("""^\d+,\d{1,2}$""")) ||
+                nospace.matches(Regex("""^\d{1,3}(\.\d{3})*,\d+$"""))
+            ) {
+                return nospace.replace(".", "").replace(",", ".")
+            }
+            return nospace.replace(",", "")
+        }
+        if (meta.decSep != '.') {
+            // Explicit foreign separators (e.g. German file header): split on
+            // the LAST decimal separator so grouping chars never eat the
+            // fraction ("1.234,56" -> 1234.56, never 1.23456).
+            val cut = nospace.lastIndexOf(meta.decSep)
+            if (cut >= 0) {
+                val intPart = nospace.substring(0, cut).replace(meta.thouSep.toString(), "")
+                return intPart + "." + nospace.substring(cut + 1)
+            }
+            return nospace.replace(meta.thouSep.toString(), "")
+        }
+        return nospace.replace(meta.thouSep.toString(), "")
     }
 
     private data class RawEntry(val op: Char, val num: String, val pct: Boolean, val comment: String)
