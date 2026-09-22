@@ -22,6 +22,11 @@ class TapeEngineTest {
 
     private val meta = CalcMeta(decimals = 5)
 
+    /** Numerical equality, immune to BigDecimal scale quirks (100 vs 1E+2). */
+    private fun assertAmount(expected: String, actual: BigDecimal) {
+        assertEquals(0, BigDecimal(expected).compareTo(actual))
+    }
+
     /** Same shape as a CalcTape export: entries, separator, balance, entries... */
     private val LEDGER = """
 <SFRCalculatorHeader>
@@ -83,7 +88,7 @@ VARINFO=
         val doc = CalcFile.parse(" + 10\n + 2\n * 3\n")
         val eval = TapeEvaluator.evaluate(doc.lines, 2)
         assertTrue(eval.errors.isEmpty())
-        assertEquals(BigDecimal("16"), eval.grandTotal.stripTrailingZeros())
+        assertAmount("16", eval.grandTotal)
     }
 
     @Test
@@ -198,14 +203,14 @@ VARINFO=
         // `100+5` computes like the calculator keys (CalcTape behavior).
         val eval = TapeEvaluator.evaluate(CalcFile.parse("100+5\n").lines, 2)
         assertTrue(eval.errors.isEmpty())
-        assertEquals(BigDecimal("105"), eval.grandTotal.stripTrailingZeros())
+        assertAmount("105", eval.grandTotal)
     }
 
     @Test
     fun textLedDateStaysComment() {
         val doc = CalcFile.parse("trip 2026-09-21\n + 1\n")
         val eval = TapeEvaluator.evaluate(doc.lines, 2)
-        assertEquals(BigDecimal("1"), eval.grandTotal.stripTrailingZeros())
+        assertAmount("1", eval.grandTotal)
     }
 
     @Test
@@ -214,7 +219,7 @@ VARINFO=
         assertTrue(doc.warnings.isEmpty())
         val eval = TapeEvaluator.evaluate(doc.lines, 2)
         assertTrue(eval.errors.isEmpty())
-        assertEquals(BigDecimal("5"), eval.grandTotal.stripTrailingZeros())
+        assertAmount("5", eval.grandTotal)
     }
 
     @Test
@@ -343,7 +348,7 @@ VARINFO=
     @Test
     fun bareCompoundWithSpacesSplits() {
         val eval = TapeEvaluator.evaluate(CalcFile.parse("5 + 3\n").lines, 2)
-        assertEquals(BigDecimal("8"), eval.grandTotal.stripTrailingZeros())
+        assertAmount("8", eval.grandTotal)
     }
 
     @Test
@@ -493,7 +498,7 @@ VARINFO=
     fun germanGroupingOnlyReadsCorrectly() {
         val text = "<SFRCalculatorHeader>\nDECIMALS=2\nDECSEP=,\nTHOUSEP=.\n</SFRCalculatorHeader>\n1.234\n"
         val eval = TapeEvaluator.evaluate(CalcFile.parse(text).lines, 2)
-        assertEquals(BigDecimal("1234"), eval.grandTotal.stripTrailingZeros())
+        assertAmount("1234", eval.grandTotal)
     }
 
     @Test
@@ -522,11 +527,11 @@ VARINFO=
         // × ÷ − from other keyboards behave like * / -.
         val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 100\n × 2\n").lines, 2)
         assertTrue(eval.errors.isEmpty())
-        assertEquals(BigDecimal("200"), eval.grandTotal.stripTrailingZeros())
+        assertAmount("200", eval.grandTotal)
         val eval2 = TapeEvaluator.evaluate(CalcFile.parse(" − 5\n").lines, 2)
-        assertEquals(BigDecimal("-5"), eval2.grandTotal.stripTrailingZeros())
+        assertAmount("-5", eval2.grandTotal)
         val eval3 = TapeEvaluator.evaluate(CalcFile.parse(" + 100\n ÷ 4\n").lines, 2)
-        assertEquals(BigDecimal("25"), eval3.grandTotal.stripTrailingZeros())
+        assertAmount("25", eval3.grandTotal)
     }
 
     @Test
@@ -535,10 +540,10 @@ VARINFO=
         val doc = CalcFile.parse(" + ₹500 lunch\n")
         assertTrue(doc.warnings.isEmpty())
         val entry = doc.lines.filterIsInstance<TapeLine.Entry>().single()
-        assertEquals(BigDecimal("500"), entry.amount.stripTrailingZeros())
+        assertAmount("500", entry.amount)
         assertEquals("lunch", entry.comment)
         val bare = TapeEvaluator.evaluate(CalcFile.parse("₹500\n").lines, 2)
-        assertEquals(BigDecimal("500"), bare.grandTotal.stripTrailingZeros())
+        assertAmount("500", bare.grandTotal)
     }
 
     @Test
@@ -546,14 +551,14 @@ VARINFO=
         // १२ = 12.
         val eval = TapeEvaluator.evaluate(CalcFile.parse("१२\n").lines, 2)
         assertTrue(eval.errors.isEmpty())
-        assertEquals(BigDecimal("12"), eval.grandTotal.stripTrailingZeros())
+        assertAmount("12", eval.grandTotal)
     }
 
     @Test
     fun arabicIndicDigitsCompute() {
         // ١٢٣ = 123.
         val eval = TapeEvaluator.evaluate(CalcFile.parse("١٢٣\n").lines, 2)
-        assertEquals(BigDecimal("123"), eval.grandTotal.stripTrailingZeros())
+        assertAmount("123", eval.grandTotal)
     }
 
     @Test
@@ -561,7 +566,7 @@ VARINFO=
         // Comment script is preserved byte-identically; only the number folds.
         val doc = CalcFile.parse(" + 100 meeting १२\n")
         val entry = doc.lines.filterIsInstance<TapeLine.Entry>().single()
-        assertEquals(BigDecimal("100"), entry.amount.stripTrailingZeros())
+        assertAmount("100", entry.amount)
         assertEquals("meeting १२", entry.comment)
     }
 
@@ -569,9 +574,9 @@ VARINFO=
     fun leadingDotDecimal() {
         val eval = TapeEvaluator.evaluate(CalcFile.parse(" + .5\n").lines, 2)
         assertTrue(eval.errors.isEmpty())
-        assertEquals(BigDecimal("0.5"), eval.grandTotal.stripTrailingZeros())
+        assertAmount("0.5", eval.grandTotal)
         val bare = TapeEvaluator.evaluate(CalcFile.parse(".5 lunch\n").lines, 2)
-        assertEquals(BigDecimal("0.5"), bare.grandTotal.stripTrailingZeros())
+        assertAmount("0.5", bare.grandTotal)
     }
 
     @Test
@@ -587,7 +592,7 @@ VARINFO=
         // "5 eggs": the 'e' needs digits after it to count as an exponent.
         val doc = CalcFile.parse("5 eggs\n")
         val entry = doc.lines.filterIsInstance<TapeLine.Entry>().single()
-        assertEquals(BigDecimal("5"), entry.amount.stripTrailingZeros())
+        assertAmount("5", entry.amount)
         assertEquals("eggs", entry.comment)
     }
 
@@ -595,6 +600,6 @@ VARINFO=
     fun spacedSignNumber() {
         // "+ - 2" (sign separated by space) still means -2.
         val eval = TapeEvaluator.evaluate(CalcFile.parse("+ - 2\n").lines, 2)
-        assertEquals(BigDecimal("-2"), eval.grandTotal.stripTrailingZeros())
+        assertAmount("-2", eval.grandTotal)
     }
 }
