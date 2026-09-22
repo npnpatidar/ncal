@@ -173,10 +173,15 @@ object TapeEvaluator {
                         lineValues.add(Triple(index, null, msg))
                         continue
                     }
+                    // A `%` behind `*`/`/`/`^` is a fraction of the running
+                    // subtotal used as the factor: `* 19%` means ×0.19, so
+                    // `+ 100 * 19%` is 19 (not 1900) and `^ 50%` is sqrt.
+                    // (The per-line value still records the resolved amount,
+                    // CalcTape-style: `→ 19.00`.)
                     val rhs = if (e.isPercent) {
                         val resolved = percentOf(base.add(sum, MC).add(cur, MC), e.amount)
                         lineValues.add(Triple(index, resolved, null))
-                        resolved
+                        resolved.divide(BigDecimal(100), MC)
                     } else {
                         lineValues.add(Triple(index, e.amount, null))
                         e.amount

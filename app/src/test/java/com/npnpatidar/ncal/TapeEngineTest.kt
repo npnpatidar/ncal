@@ -11,6 +11,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.math.BigDecimal
+import java.math.RoundingMode
 
 /**
  * Engine tests. The anonymized [LEDGER] fixture mirrors the structure of a real
@@ -425,5 +426,45 @@ VARINFO=
         assertEquals(TapeFormatter.LineMark(bold = false, negative = false), marks[2])
         assertEquals(TapeFormatter.LineMark(bold = true, negative = true), marks[3])
         assertEquals(TapeFormatter.LineMark(bold = false, negative = true), marks[4])
+    }
+
+    @Test
+    fun multPercentUsesFraction() {
+        // `* 19%` means ×0.19: 100 * 0.19 = 19 (was 1900 before the fix).
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 100\n * 19%\n").lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertEquals(BigDecimal("19.00"), eval.grandTotal.setScale(2))
+    }
+
+    @Test
+    fun divPercentUsesFraction() {
+        // `/ 50%` means ÷0.5: 200 / 0.5 = 400 (was 2 before the fix).
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 200\n / 50%\n").lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertEquals(BigDecimal("400.00"), eval.grandTotal.setScale(2))
+    }
+
+    @Test
+    fun powPercentUsesFraction() {
+        // `^ 50%` means ^0.5 (square root): 2^0.5 ≈ 1.41 (was 2 before the fix).
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 2\n ^ 50%\n").lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertEquals(BigDecimal("1.41"), eval.grandTotal.setScale(2, RoundingMode.HALF_UP))
+    }
+
+    @Test
+    fun leadingStarPercentHalvesTotal() {
+        // Chained `* 50%` on a 100 subtotal: 100 × 0.5 = 50.
+        val doc = CalcFile.parse(" + 100\n ------------------ \n + 100\n * 50%\n")
+        val eval = TapeEvaluator.evaluate(doc.lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertEquals(BigDecimal("50.00"), eval.grandTotal.setScale(2))
+    }
+
+    @Test
+    fun zeroPercentFactorDivErrors() {
+        // `/ 0%` still divides by zero (0/100 = 0 factor).
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 200\n / 0%\n").lines, 2)
+        assertTrue(eval.errors.any { it.contains("division by zero") })
     }
 }
