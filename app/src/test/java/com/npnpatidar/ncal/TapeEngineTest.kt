@@ -213,9 +213,10 @@ VARINFO=
         assertEquals("kept", bal.comment)
         val eval = TapeEvaluator.evaluate(doc.lines, 2)
         assertEquals(BigDecimal("10.00"), eval.grandTotal.setScale(2))
-        // Canonical export keeps it too.
+        // Canonical export keeps it too (re-parsed without a header, so the
+        // default 5 decimals apply).
         val out = CalcFile.write(doc, eval.subtotals)
-        assertTrue(out.contains("10.00 kept"))
+        assertTrue(out.contains("10.00000 kept"))
     }
 
     @Test
