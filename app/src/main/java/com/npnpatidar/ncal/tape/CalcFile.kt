@@ -20,10 +20,11 @@ object CalcFile {
     private const val HEADER_OPEN = "<SFRCalculatorHeader>"
     private const val HEADER_CLOSE = "</SFRCalculatorHeader>"
 
-    private val entryRe = Regex("""^\s*([+\-*/^])\s*(.*)$""")
-    private val numberHeadRe = Regex("""^([0-9][0-9.,]*)(%?)\s?(.*)$""")
     private val separatorRe = Regex("""^\s*-{2,}\s?$""")
-    private val bareRe = Regex("""^([0-9][0-9.,]*%?)(\s.*)?$""")
+    private val headingRe = Regex("""^(#+)\s?(.*)$""")
+    // Head number and inline `op number` splits (matchAt/find: no anchors).
+    private val headNumRe = Regex("""([0-9][0-9.,]*)(%?)""")
+    private val splitRe = Regex("""([+\-*/^])\s*([0-9][0-9.,]*)(%?)""")
     private val headingRe = Regex("""^(#+)\s?(.*)$""")
 
     fun parse(text: String): TapeDoc {
@@ -63,27 +64,31 @@ object CalcFile {
                     lines.add(TapeLine.Heading(m.groupValues[2], ln))
                 }
                 else -> {
-                    val em = entryRe.matchEntire(ln)
-                    val nm = em?.let { numberHeadRe.matchEntire(it.groupValues[2]) }
-                    if (em != null && nm != null) {
-                        val op = em.groupValues[1][0]
-                        val digits = normalizeNumber(nm.groupValues[1], meta)
-                        val amount = digits.toBigDecimalOrNull()
-                        if (amount != null) {
-                            lines.add(
-                                TapeLine.Entry(
-                                    op = op,
-                                    amount = amount,
-                                    isPercent = nm.groupValues[2] == "%",
-                                    comment = nm.groupValues[3].trim(),
-                                ),
-                            )
-                        } else {
+                    val raws = tokenizeEntryLine(ln.trim())
+                    if (raws == null) {
+                        // Old warning semantics: an op-led line with no number
+                        // warns; plain text stays silent.
+                        if (ln.trimStart().firstOrNull() in "+-*/^") {
+                            warnMsgs.add("line ${idx + 1}: bad number, kept as comment")
+                        }
+                        lines.add(TapeLine.Comment(ln))
+                    } else {
+                        val tmp = mutableListOf<TapeLine.Entry>()
+                        var ok = true
+                        for (r in raws) {
+                            val amount = normalizeNumber(r.num, meta).toBigDecimalOrNull()
+                            if (amount == null) {
+                                ok = false
+                                break
+                            }
+                            tmp.add(TapeLine.Entry(r.op, amount, r.pct, r.comment))
+                        }
+                        if (!ok) {
                             warnMsgs.add("line ${idx + 1}: bad number, kept as comment")
                             lines.add(TapeLine.Comment(ln))
+                        } else {
+                            lines.addAll(tmp)
                         }
-                    } else {
-                        lines.add(parseBareOrComment(ln, meta, warnMsgs, idx))
                     }
                 }
             }
@@ -163,26 +168,52 @@ object CalcFile {
         return s
     }
 
+    private data class RawEntry(val op: Char, val num: String, val pct: Boolean, val comment: String)
+
     /**
-     * Bare number without an operator (`78`, `78 lunch`): implied `+`, so
-     * plain typing in the notepad just works. Guarded: digits must end or be
-     * followed by whitespace, so dates like `2026-09-21` stay comments.
+     * Split an entry line on inline `op number` boundaries (CalcTape behavior:
+     * an operator behind a number starts the next calculation line, even in the
+     * middle of the comment), so ABC-typed `+ 100 + 20` works exactly like the
+     * calculator keys. Returns null when the line isn't an entry at all.
+     *
+     * Guards: lines must start with an operator or a digit; bare-led lines
+     * additionally require the first number to end or hit whitespace/`%`, so
+     * dates like `2026-09-21` and words stay comments.
      */
-    private fun parseBareOrComment(
-        ln: String,
-        meta: CalcMeta,
-        warnMsgs: MutableList<String>,
-        idx: Int,
-    ): TapeLine {
-        val bm = bareRe.matchEntire(ln.trim()) ?: return TapeLine.Comment(ln)
-        var digits = bm.groupValues[1]
-        val isPercent = digits.endsWith("%")
-        if (isPercent) digits = digits.dropLast(1)
-        val amount = normalizeNumber(digits, meta).toBigDecimalOrNull()
-        if (amount == null) {
-            warnMsgs.add("line ${idx + 1}: bad number, kept as comment")
-            return TapeLine.Comment(ln)
+    private fun tokenizeEntryLine(trimmed: String): List<RawEntry>? {
+        if (trimmed.isEmpty()) return null
+        var rest: String
+        var op: Char
+        val first = trimmed[0]
+        val explicitOp = first in "+-*/^"
+        if (explicitOp) {
+            op = first
+            rest = trimmed.substring(1).trimStart()
+        } else if (first.isDigit()) {
+            op = '+'
+            rest = trimmed
+        } else {
+            return null
         }
-        return TapeLine.Entry('+', amount, isPercent, bm.groupValues[2].trim())
+        val head = headNumRe.matchAt(rest, 0) ?: return null
+        if (!explicitOp) {
+            val after = rest.substring(head.range.last + 1)
+            if (!(after.isEmpty() || after[0].isWhitespace() || after.startsWith("%"))) return null
+        }
+        val out = mutableListOf<RawEntry>()
+        var curOp = op
+        var curNum = head.groupValues[1]
+        var curPct = head.groupValues[2] == "%"
+        var cursor = head.range.last + 1
+        while (true) {
+            val m = splitRe.find(rest, cursor) ?: break
+            out.add(RawEntry(curOp, curNum, curPct, rest.substring(cursor, m.range.first).trim()))
+            curOp = m.groupValues[1][0]
+            curNum = m.groupValues[2]
+            curPct = m.groupValues[3] == "%"
+            cursor = m.range.last + 1
+        }
+        out.add(RawEntry(curOp, curNum, curPct, rest.substring(cursor).trim()))
+        return out
     }
 }

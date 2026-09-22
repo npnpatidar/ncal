@@ -18,6 +18,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -106,7 +107,7 @@ fun SettingsScreen(
                     valueRange = 12f..28f,
                 )
             }
-            item { Section("Key height portrait (${settings.keyHeightPortDp.toInt()}dp)") }
+            item { Section("Keyboard height portrait (${settings.keyHeightPortDp.toInt()}dp)") }
             item {
                 Slider(
                     value = settings.keyHeightPortDp,
@@ -114,7 +115,7 @@ fun SettingsScreen(
                     valueRange = 40f..80f,
                 )
             }
-            item { Section("Key height landscape (${settings.keyHeightLandDp.toInt()}dp)") }
+            item { Section("Keyboard height landscape (${settings.keyHeightLandDp.toInt()}dp)") }
             item {
                 Slider(
                     value = settings.keyHeightLandDp,
@@ -144,6 +145,12 @@ fun SettingsScreen(
                     onSelect = { onUpdate(settings.copy(noteSort = it)) },
                     label = { it.first },
                 )
+            }
+            item {
+                TextButton(
+                    onClick = { onUpdate(AppSettings()) },
+                    modifier = Modifier.padding(top = 16.dp),
+                ) { Text("Reset to defaults") }
             }
         }
     }

@@ -7,6 +7,7 @@ import com.npnpatidar.ncal.tape.TapeEvaluator
 import com.npnpatidar.ncal.tape.TapeFormatter
 import com.npnpatidar.ncal.tape.TapeLine
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.math.BigDecimal
@@ -254,5 +255,55 @@ VARINFO=
         val eval = TapeEvaluator.evaluate(CalcFile.parse(pretty).lines, 2)
         assertTrue(eval.errors.isEmpty())
         assertEquals(BigDecimal("1234567.89"), eval.grandTotal)
+    }
+
+    @Test
+    fun inlineOperatorStartsNewEntry() {
+        // ABC-typed `+ 100 + 20` behaves like the calculator keys.
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 100 + 20 redux\n").lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertEquals(BigDecimal("120.00"), eval.grandTotal.setScale(2))
+    }
+
+    @Test
+    fun inlineOperatorInCommentStaysText() {
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 100 Rent + heating\n").lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertEquals(BigDecimal("100.00"), eval.grandTotal.setScale(2))
+    }
+
+    @Test
+    fun bareCompoundWithSpacesSplits() {
+        val eval = TapeEvaluator.evaluate(CalcFile.parse("5 + 3\n").lines, 2)
+        assertEquals(BigDecimal("8"), eval.grandTotal.stripTrailingZeros())
+    }
+
+    @Test
+    fun leadingMultiplyChainsOntoTotal() {
+        // `* 3` after a 100 subtotal triples it instead of erroring.
+        val doc = CalcFile.parse(" + 100\n ------------------ \n + 100.00 \n * 3\n")
+        val eval = TapeEvaluator.evaluate(doc.lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertEquals(listOf(BigDecimal("100.00")), eval.subtotals.map { it.setScale(2) })
+        assertEquals(BigDecimal("300.00"), eval.grandTotal.setScale(2))
+    }
+
+    @Test
+    fun leadingMultiplyOnEmptyTapeIsQuietZero() {
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" * 5\n").lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertEquals(0, eval.grandTotal.compareTo(BigDecimal.ZERO))
+    }
+
+    @Test
+    fun hasOpenEntriesGuardsEquals() {
+        assertFalse(TapeEvaluator.hasOpenEntries(CalcFile.parse("").lines))
+        assertFalse(TapeEvaluator.hasOpenEntries(CalcFile.parse(" + 5\n ------------------ \n + 5.00 \n").lines))
+        assertTrue(TapeEvaluator.hasOpenEntries(CalcFile.parse(" + 5\n").lines))
+        assertTrue(
+            TapeEvaluator.hasOpenEntries(
+                CalcFile.parse(" + 5\n ------------------ \n + 5.00 \n + 2\n").lines,
+            ),
+        )
     }
 }

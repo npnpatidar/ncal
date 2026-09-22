@@ -18,10 +18,16 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DrawerValue
@@ -124,7 +130,7 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
         ModalNavigationDrawer(
             drawerState = drawerState,
             drawerContent = {
-                ModalDrawerSheet {
+                ModalDrawerSheet(modifier = Modifier.fillMaxWidth(0.5f)) {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -161,12 +167,29 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                         }
                     }
                     TextButton(onClick = { importLauncher.launch("*/*") }) {
+                        Icon(Icons.Filled.Download, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
                         Text("Import .calc / .txt")
                     }
-                    TextButton(onClick = { showSettings = true }) { Text("Settings") }
+                    TextButton(onClick = {
+                        showSettings = true
+                        scope.launch { drawerState.close() }
+                    }) {
+                        Icon(Icons.Filled.Settings, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Settings")
+                    }
                     HorizontalDivider()
-                    TextButton(onClick = { vm.exportCalc() }) { Text("Save .calc → Download/ncal") }
-                    TextButton(onClick = { vm.exportTxt() }) { Text("Save .txt → Download/ncal") }
+                    TextButton(onClick = { vm.exportCalc() }) {
+                        Icon(Icons.Filled.Share, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Save .calc → Download/ncal")
+                    }
+                    TextButton(onClick = { vm.exportTxt() }) {
+                        Icon(Icons.Filled.Share, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Save .txt → Download/ncal")
+                    }
                     Text(
                         "ncal ${state.appVersion}",
                         style = MaterialTheme.typography.bodySmall,
@@ -432,28 +455,29 @@ private fun KeypadGrid(
         }
         action()
     }
-    // Pair(display label, action). Display uses x ÷ - glyphs; inserted text stays ASCII.
-    val keys: List<Pair<String, () -> Unit>> = listOf(
-        "AC" to onClear,
-        "undo" to onUndo,
-        "⌫" to onBackspace,
-        "÷" to { onOp("\n / ") },
-        "7" to { onDigit("7") },
-        "8" to { onDigit("8") },
-        "9" to { onDigit("9") },
-        "×" to { onOp("\n * ") },
-        "4" to { onDigit("4") },
-        "5" to { onDigit("5") },
-        "6" to { onDigit("6") },
-        "−" to { onOp("\n - ") },
-        "1" to { onDigit("1") },
-        "2" to { onDigit("2") },
-        "3" to { onDigit("3") },
-        "+" to { onOp("\n + ") },
-        "0" to { onDigit("0") },
-        "." to { onDigit(".") },
-        "%" to { onOp("% ") },
-        "=" to onEquals,
+    // Pair(display label, action). Display uses x ÷ - glyphs and an undo
+    // icon; inserted text stays ASCII.
+    val keys: List<KeyDef> = listOf(
+        KeyDef(action = onClear, label = "AC"),
+        KeyDef(action = onUndo, icon = Icons.Filled.Undo),
+        KeyDef(action = onBackspace, label = "⌫"),
+        KeyDef(action = { onOp("\n / ") }, label = "÷"),
+        KeyDef(action = { onDigit("7") }, label = "7"),
+        KeyDef(action = { onDigit("8") }, label = "8"),
+        KeyDef(action = { onDigit("9") }, label = "9"),
+        KeyDef(action = { onOp("\n * ") }, label = "×"),
+        KeyDef(action = { onDigit("4") }, label = "4"),
+        KeyDef(action = { onDigit("5") }, label = "5"),
+        KeyDef(action = { onDigit("6") }, label = "6"),
+        KeyDef(action = { onOp("\n - ") }, label = "−"),
+        KeyDef(action = { onDigit("1") }, label = "1"),
+        KeyDef(action = { onDigit("2") }, label = "2"),
+        KeyDef(action = { onDigit("3") }, label = "3"),
+        KeyDef(action = { onOp("\n + ") }, label = "+"),
+        KeyDef(action = { onDigit("0") }, label = "0"),
+        KeyDef(action = { onDigit(".") }, label = "."),
+        KeyDef(action = { onOp("% ") }, label = "%"),
+        KeyDef(action = onEquals, label = "="),
     )
     LazyVerticalGrid(
         columns = GridCells.Fixed(4),
@@ -461,14 +485,21 @@ private fun KeypadGrid(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        items(keys) { (label, action) ->
+        items(keys) { key ->
             Button(
-                onClick = { press(action) },
+                onClick = { press(key.action) },
                 modifier = Modifier.height(keyHeight),
                 contentPadding = PaddingValues(2.dp),
             ) {
-                Text(label, fontSize = keyFontSp, maxLines = 1)
+                if (key.icon != null) Icon(key.icon, contentDescription = key.label ?: "key")
+                else Text(key.label ?: "", fontSize = keyFontSp, maxLines = 1)
             }
         }
     }
 }
+
+private data class KeyDef(
+    val action: () -> Unit,
+    val label: String? = null,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+)

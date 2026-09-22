@@ -90,9 +90,22 @@ object TapeEvaluator {
     private data class IndexedEntry(val index: Int, val entry: TapeLine.Entry)
 
     /**
+     * True when the tape has entries after the last separator/balance — i.e.
+     * there is an open block worth closing with `=`.
+     */
+    fun hasOpenEntries(lines: List<TapeLine>): Boolean {
+        val cut = lines.indexOfLast { it is TapeLine.Separator || it is TapeLine.Balance }
+        return lines.drop(cut + 1).any { it is TapeLine.Entry }
+    }
+
+    /**
      * Returns (blockDelta, perLineValues, errors).
      * Single pass: [sum] holds finished additive part, [cur] the open
      * multiplicative chain (with its sign).
+     *
+     * A block opening with `*`, `/` or `^` chains onto the running total
+     * (`* 3` triples it, `/ 2` halves it) instead of erroring — on an empty
+     * tape the base is 0, so it quietly stays 0.
      */
     private fun evalBlock(
         block: List<IndexedEntry>,
@@ -104,8 +117,30 @@ object TapeEvaluator {
         var cur = BigDecimal.ZERO
         var curSet = false
 
-        for ((index, e) in block) {
+        for ((entryIdx, ie) in block.withIndex()) {
+            val index = ie.index
+            val e = ie.entry
             val tag = "line ${index + 1}"
+            if (entryIdx == 0 && (e.op == '*' || e.op == '/' || e.op == '^')) {
+                val factor = if (e.isPercent) e.amount.divide(BigDecimal(100), MC) else e.amount
+                if (e.op == '/' && factor.compareTo(BigDecimal.ZERO) == 0) {
+                    val msg = "$tag: division by zero"
+                    errs.add(msg)
+                    lineValues.add(Triple(index, null, msg))
+                    curSet = true
+                    continue
+                }
+                val target = when (e.op) {
+                    '*' -> base.multiply(factor, MC)
+                    '/' -> base.divide(factor, MC)
+                    else -> pow(base, factor, tag, errs)
+                }
+                val delta = target.subtract(base, MC)
+                lineValues.add(Triple(index, delta, null))
+                cur = delta
+                curSet = true
+                continue
+            }
             when (e.op) {
                 '+', '-' -> {
                     sum = sum.add(cur, MC)

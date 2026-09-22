@@ -260,7 +260,14 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
     // ---- editing ----
 
     fun onTapeChange(text: String) {
-        pushUndo(_state.value.tapeText)
+        val prev = _state.value.tapeText
+        if (_state.value.keypadMode == KeypadMode.SYSTEM && text == "$prev\n") {
+            // Enter pressed at the very end of the tape: close the block,
+            // exactly like `=`. (Enter anywhere else inserts a plain newline.)
+            equals()
+            return
+        }
+        pushUndo(prev)
         _state.update { it.copy(tapeText = text) }
         reevaluate("edit len=${text.length}")
         scheduleSave()
@@ -300,11 +307,18 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** `=`: close the block — append separator + recomputed balance line,
-     * then re-layout the tape in 3 left-aligned columns. */
+     * then re-layout the tape in 3 left-aligned columns. Ignored when there
+     * is no open block (empty tape, or tape already ending at a subtotal). */
     fun equals() {
         // NOTE: no trailing newline — parse() would turn it into a Blank line,
         // which resets the open section and made `=` append a 0.00000 balance.
         val cur = _state.value.tapeText.trimEnd()
+        val probe = CalcFile.parse(cur)
+        if (!TapeEvaluator.hasOpenEntries(probe.lines)) {
+            _state.update { it.copy(message = "Nothing to total") }
+            NcalLogger.d("Tape", "equals ignored: no open entries")
+            return
+        }
         pushUndo(_state.value.tapeText)
         NcalLogger.d("Tape", "equals before: ${snapshot(cur)}")
         val doc = CalcFile.parse(cur)
@@ -324,10 +338,10 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         scheduleSave()
     }
 
-    /** AC: clear the whole notepad (restorable via Undo). */
+    /** AC: clear the whole note — nothing left, not even a zero. Undo restores. */
     fun clear() {
         pushUndo(_state.value.tapeText)
-        _state.update { it.copy(tapeText = " + 0\n") }
+        _state.update { it.copy(tapeText = "") }
         NcalLogger.i("Tape", "AC note=${_state.value.noteName}")
         reevaluate("ac")
         scheduleSave()
