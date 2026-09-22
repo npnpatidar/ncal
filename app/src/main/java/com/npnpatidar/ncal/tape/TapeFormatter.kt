@@ -30,13 +30,8 @@ object TapeFormatter {
     ): String {
         val doc = CalcFile.parse(tapeText)
         val gap = " ".repeat(indent.coerceIn(1, 8))
-        fun num(v: java.math.BigDecimal, pct: Boolean): String {
-            val s = groupNumber(
-                v.setScale(decimals, RoundingMode.HALF_UP).toPlainString(),
-                grouping,
-            )
-            return if (pct) "$s%" else s
-        }
+        fun num(v: java.math.BigDecimal, pct: Boolean): String =
+            formatNum(v, decimals, pct, grouping)
         val width = doc.lines.mapNotNull {
             when (it) {
                 is TapeLine.Entry -> num(it.amount, it.isPercent).length
@@ -65,6 +60,59 @@ object TapeFormatter {
         return out.joinToString("\n").trimEnd() + "\n"
     }
 
+    /** Scaled (+ grouped, + `%`) rendering of one amount. Shared by [pretty]
+     * and [patchBalances] so live display and `=` agree exactly. */
+    fun formatNum(v: java.math.BigDecimal, decimals: Int, pct: Boolean, grouping: Grouping): String {
+        val s = groupNumber(
+            v.setScale(decimals, RoundingMode.HALF_UP).toPlainString(),
+            grouping,
+        )
+        return if (pct) "$s%" else s
+    }
+
+    /**
+     * Live refresh: rewrite ONLY balance lines to their recomputed running
+     * totals ([EvalResult.balanceTotals]), leaving every entry byte-identical
+     * so typing is never disturbed. Returns null when nothing would change.
+     * Line count and order never change, so the cursor stays on its line.
+     */
+    fun patchBalances(
+        rawText: String,
+        doc: TapeDoc,
+        eval: EvalResult,
+        decimals: Int,
+        indent: Int,
+        grouping: Grouping,
+    ): String? {
+        val raws = rawText.split("\n")
+        if (raws.size != doc.lines.size) return null
+        val gap = " ".repeat(indent.coerceIn(1, 8))
+        val width = doc.lines.mapIndexedNotNull { i, line ->
+            when (line) {
+                is TapeLine.Entry -> formatNum(line.amount, decimals, line.isPercent, grouping).length
+                is TapeLine.Balance ->
+                    (eval.balanceTotals[i] ?: line.value).let {
+                        formatNum(it, decimals, false, grouping).length
+                    }
+                else -> null
+            }
+        }.maxOrNull()?.coerceAtLeast(1) ?: 0
+        var changed = false
+        val out = raws.mapIndexed { i, raw ->
+            val line = doc.lines[i]
+            if (line is TapeLine.Balance) {
+                val v = eval.balanceTotals[i] ?: line.value
+                val n = formatNum(v, decimals, false, grouping).padEnd(width)
+                val fresh = if (line.comment.isNotBlank()) "+ $n$gap${line.comment}"
+                else "+ $n".trimEnd()
+                if (fresh != raw) changed = true
+                fresh
+            } else {
+                raw
+            }
+        }
+        return if (changed) out.joinToString("\n") else null
+    }
     /** Insert thousands separators into a plain scaled number (`1234567.89`). */
     fun groupNumber(s: String, grouping: Grouping): String {
         if (grouping == Grouping.OFF) return s

@@ -227,10 +227,38 @@ VARINFO=
         val eval = TapeEvaluator.evaluate(doc.lines, 2)
         assertTrue(eval.errors.isEmpty())
         assertEquals(listOf(BigDecimal("5.00")), eval.subtotals.map { it.setScale(2) })
-        // `+ 3` directly after the separator is a balance restatement of the
-        // running total (display-only), so the grand total stays 5: new input
-        // always lands after the balance line in the editor.
+        // `+ 3` after the separator mismatches the running total, so it is
+        // fresh input (a normal entry), not a restatement: grand becomes 8.
+        assertEquals(BigDecimal("8.00"), eval.grandTotal.setScale(2))
+    }
+
+    @Test
+    fun matchingPostSeparatorPlusIsRestatement() {
+        val doc = CalcFile.parse(" + 5\n------------------\n + 5.00 \n")
+        val eval = TapeEvaluator.evaluate(doc.lines, 2)
+        assertTrue(eval.errors.isEmpty())
         assertEquals(BigDecimal("5.00"), eval.grandTotal.setScale(2))
+    }
+
+    @Test
+    fun patchBalancesFreshensStaleSubtotal() {
+        val raw = " + 100\n------------------\n + 0\n"
+        val doc = CalcFile.parse(raw)
+        val eval = TapeEvaluator.evaluate(doc.lines, 2)
+        val patched = TapeFormatter.patchBalances(raw, doc, eval, 2, 2, Grouping.OFF)
+        assertEquals(" + 100\n------------------\n+ 100.00\n", patched)
+        // And the patched tape evaluates cleanly with the subtotal as restatement.
+        val eval2 = TapeEvaluator.evaluate(CalcFile.parse(patched!!).lines, 2)
+        assertTrue(eval2.errors.isEmpty())
+        assertEquals(BigDecimal("100.00"), eval2.grandTotal.setScale(2))
+    }
+
+    @Test
+    fun patchBalancesIsNoopWhenFresh() {
+        val pretty = TapeFormatter.pretty(LEDGER, 5)
+        val doc = CalcFile.parse(pretty)
+        val eval = TapeEvaluator.evaluate(doc.lines, 5)
+        assertEquals(null, TapeFormatter.patchBalances(pretty, doc, eval, 5, 2, Grouping.OFF))
     }
 
     @Test

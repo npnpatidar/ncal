@@ -16,6 +16,11 @@ data class EvalResult(
     val grandTotal: BigDecimal,
     /** Running total of the currently open (last) section. */
     val openTotal: BigDecimal,
+    /**
+     * Running total just BEFORE each [TapeLine.Balance] line (by doc index).
+     * Drives live display refresh: the shown subtotal always tracks this.
+     */
+    val balanceTotals: Map<Int, BigDecimal>,
     val errors: List<String>,
 )
 
@@ -40,6 +45,7 @@ object TapeEvaluator {
         val subtotals = mutableListOf<BigDecimal>()
         val errors = mutableListOf<String>()
         val sectionTotals = mutableListOf<BigDecimal>()
+        val balanceTotals = mutableMapOf<Int, BigDecimal>()
         var running = BigDecimal.ZERO
         var block = mutableListOf<IndexedEntry>()
 
@@ -62,14 +68,20 @@ object TapeEvaluator {
                 }
                 is TapeLine.Balance -> {
                     flushBlock()
-                    // A `+X` line directly after a separator is a computed
-                    // restatement, never input: the editor only ever creates
-                    // such lines via `=` (with the recomputed value), and new
-                    // keypad input always lands after the balance line, so it
-                    // is parsed as a normal entry. A stale value (hand-edited
-                    // file) is silently replaced by the recomputed running
-                    // total and healed on the next save — never an error.
-                    results.add(LineResult(index, running, null))
+                    // A post-separator `+X` matching the running total is a
+                    // computed restatement (display-only). A mismatching one
+                    // is fresh user input typed right after the separator, so
+                    // it counts as a normal `+X` entry. Either way the display
+                    // snaps to the running total (see balanceTotals).
+                    balanceTotals[index] = running
+                    if (line.value.setScale(decimals, RoundingMode.HALF_UP)
+                            .compareTo(running.setScale(decimals, RoundingMode.HALF_UP)) == 0
+                    ) {
+                        results.add(LineResult(index, running, null))
+                    } else {
+                        running = running.add(line.value, MC)
+                        results.add(LineResult(index, line.value, null))
+                    }
                 }
                 is TapeLine.Blank -> {
                     flushBlock()
@@ -84,7 +96,7 @@ object TapeEvaluator {
         }
         flushBlock()
         val grand = sectionTotals.fold(running) { acc, s -> acc.add(s, MC) }
-        return EvalResult(results, subtotals, grand, running, errors)
+        return EvalResult(results, subtotals, grand, running, balanceTotals, errors)
     }
 
     private data class IndexedEntry(val index: Int, val entry: TapeLine.Entry)

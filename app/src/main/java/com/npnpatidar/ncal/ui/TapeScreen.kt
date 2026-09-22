@@ -6,10 +6,14 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -68,6 +72,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalTextInputService
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
@@ -256,10 +261,10 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    val tapeField: @Composable () -> Unit = {
-                        OutlinedTextField(
-                            value = state.tapeText,
-                            onValueChange = vm::onTapeChange,
+                        val tapeField: @Composable () -> Unit = {
+                            OutlinedTextField(
+                                value = TextFieldValue(state.tapeText, state.tapeSel),
+                                onValueChange = vm::onTapeChange,
                             modifier = Modifier.fillMaxWidth().weight(1f).focusRequester(tapeFocus),
                             readOnly = !systemMode,
                             textStyle = MaterialTheme.typography.bodyLarge.copy(
@@ -284,8 +289,10 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                         )
                     }
 
-                    // Middle strip: exactly one of calculator keypad / normal
-                    // keyboard / hidden is active, then the running total.
+                    // Middle strip: pinned above the keyboard area so it stays
+                    // visible no matter the keyboard height; exactly one of
+                    // calculator keypad / normal keyboard / hidden is active.
+                    HorizontalDivider()
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -316,19 +323,26 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                     val keyFont: TextUnit = st.keyFontSp.sp
                     val keyHeight: Dp =
                         (if (landscape) st.keyHeightLandDp else st.keyHeightPortDp).dp
+                    // The keypad never takes more than half the screen: it
+                    // scrolls internally, so the strip above always stays put.
                     if (state.keypadMode == KeypadMode.CALC) {
-                        KeypadGrid(
-                            onDigit = vm::key,
-                            onOp = vm::key,
-                            onEquals = vm::equals,
-                            onClear = vm::clear,
-                            onUndo = vm::undo,
-                            onBackspace = vm::backspace,
-                            keyFontSp = keyFont,
-                            keyHeight = keyHeight,
-                            hapticsOn = state.settings.haptics,
-                            soundOn = state.settings.keySound,
-                        )
+                        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                            val cap = maxHeight * 0.5f
+                            Box(Modifier.heightIn(max = cap)) {
+                                KeypadGrid(
+                                    onDigit = vm::key,
+                                    onOp = vm::key,
+                                    onEquals = vm::equals,
+                                    onClear = vm::clear,
+                                    onUndo = vm::undo,
+                                    onBackspace = vm::backspace,
+                                    keyFontSp = keyFont,
+                                    keyHeight = keyHeight,
+                                    hapticsOn = state.settings.haptics,
+                                    soundOn = state.settings.keySound,
+                                )
+                            }
+                        }
                     }
                 }
             }

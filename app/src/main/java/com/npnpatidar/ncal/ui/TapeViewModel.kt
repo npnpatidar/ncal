@@ -22,11 +22,14 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.math.BigDecimal
 import java.math.RoundingMode
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.TextRange
 
 enum class KeypadMode { CALC, SYSTEM, HIDDEN }
 
 data class TapeUiState(
     val tapeText: String = " + 0\n",
+    val tapeSel: TextRange = TextRange.Zero,
     val totalText: String = "0",
     val grandText: String = "0",
     val memoryText: String = "0",
@@ -217,6 +220,7 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
             _state.update {
                 it.copy(
                     tapeText = TapeFormatter.pretty(res.tapeText, decimals, s.indent, s.grouping),
+                    tapeSel = TextRange.Zero,
                     decimals = decimals,
                     notes = notes,
                     noteId = id,
@@ -259,17 +263,17 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- editing ----
 
-    fun onTapeChange(text: String) {
+    fun onTapeChange(v: TextFieldValue) {
         val prev = _state.value.tapeText
-        if (_state.value.keypadMode == KeypadMode.SYSTEM && text == "$prev\n") {
+        if (_state.value.keypadMode == KeypadMode.SYSTEM && v.text == "$prev\n") {
             // Enter pressed at the very end of the tape: close the block,
             // exactly like `=`. (Enter anywhere else inserts a plain newline.)
             equals()
             return
         }
         pushUndo(prev)
-        _state.update { it.copy(tapeText = text) }
-        reevaluate("edit len=${text.length}")
+        _state.update { it.copy(tapeText = v.text, tapeSel = v.selection) }
+        reevaluate("edit len=${v.text.length}")
         scheduleSave()
     }
 
@@ -280,7 +284,7 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         // Trim trailing whitespace first so operator tokens ("\n + ") never
         // create an accidental blank line (a blank starts a new section).
         val next = prev.trimEnd() + token
-        _state.update { it.copy(tapeText = next) }
+        _state.update { it.copy(tapeText = next, tapeSel = TextRange(next.length)) }
         NcalLogger.d("Tape", "key=${token.trim()} lines=${next.lines().size}")
         reevaluate("key")
         scheduleSave()
@@ -292,7 +296,7 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         val next = prev.trimEnd().dropLast(1)
         if (next == prev) return
         pushUndo(prev)
-        _state.update { it.copy(tapeText = next) }
+        _state.update { it.copy(tapeText = next, tapeSel = TextRange(next.length)) }
         NcalLogger.d("Tape", "backspace")
         reevaluate("backspace")
         scheduleSave()
@@ -301,7 +305,8 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
     fun newLine() {
         val prev = _state.value.tapeText
         pushUndo(prev)
-        _state.update { it.copy(tapeText = prev.trimEnd() + "\n ") }
+        val next = prev.trimEnd() + "\n "
+        _state.update { it.copy(tapeText = next, tapeSel = TextRange(next.length)) }
         reevaluate("newline")
         scheduleSave()
     }
@@ -331,7 +336,7 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
             s.indent,
             s.grouping,
         )
-        _state.update { it.copy(tapeText = next) }
+        _state.update { it.copy(tapeText = next, tapeSel = TextRange(next.length)) }
         NcalLogger.i("Tape", "equals total=${eval.openTotal} subs=${eval.subtotals.size}")
         NcalLogger.d("Tape", "equals after: ${snapshot(next)}")
         reevaluate("equals")
@@ -341,7 +346,7 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
     /** AC: clear the whole note — nothing left, not even a zero. Undo restores. */
     fun clear() {
         pushUndo(_state.value.tapeText)
-        _state.update { it.copy(tapeText = "") }
+        _state.update { it.copy(tapeText = "", tapeSel = TextRange.Zero) }
         NcalLogger.i("Tape", "AC note=${_state.value.noteName}")
         reevaluate("ac")
         scheduleSave()
@@ -350,7 +355,7 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
     fun undo() {
         val prev = undoStack.removeLastOrNull() ?: return
         redoStack.addLast(_state.value.tapeText)
-        _state.update { it.copy(tapeText = prev) }
+        _state.update { it.copy(tapeText = prev, tapeSel = TextRange(prev.length)) }
         NcalLogger.d("Tape", "undo")
         reevaluate("undo")
         scheduleSave()
@@ -359,7 +364,7 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
     fun redo() {
         val next = redoStack.removeLastOrNull() ?: return
         undoStack.addLast(_state.value.tapeText)
-        _state.update { it.copy(tapeText = next) }
+        _state.update { it.copy(tapeText = next, tapeSel = TextRange(next.length)) }
         NcalLogger.d("Tape", "redo")
         reevaluate("redo")
         scheduleSave()
@@ -375,7 +380,8 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         val cur = _state.value.tapeText
         pushUndo(cur)
         val line = CalcFile.formatEntry('+', memory, false, "MR", meta)
-        _state.update { it.copy(tapeText = cur.trimEnd() + "\n$line\n") }
+        val recalled = cur.trimEnd() + "\n$line\n"
+        _state.update { it.copy(tapeText = recalled, tapeSel = TextRange(recalled.length)) }
         NcalLogger.i("Tape", "MR value=$memory")
         reevaluate("mr")
         scheduleSave()
@@ -413,6 +419,7 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         _state.update {
             it.copy(
                 tapeText = TapeFormatter.pretty(res.tapeText, decimals, s.indent, s.grouping),
+                tapeSel = TextRange.Zero,
                 decimals = decimals,
             )
         }
@@ -436,25 +443,68 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         return TapeEvaluator.evaluate(doc.lines, decimals).grandTotal
     }
 
+    /**
+     * Recompute everything. Balance (subtotal) lines are refreshed live to
+     * their recomputed running totals while entry lines stay byte-identical,
+     * so typing is never disturbed; the cursor stays on its line. A second
+     * evaluation on the patched text keeps displayed totals consistent.
+     */
     private fun reevaluate(why: String) {
-        val text = _state.value.tapeText
-        val doc = CalcFile.parse(text)
+        val s = _state.value
+        val doc = CalcFile.parse(s.tapeText)
         val eval = TapeEvaluator.evaluate(doc.lines, decimals)
-        for (w in doc.warnings) NcalLogger.w("Tape", "import: $w")
-        for (e in eval.errors) NcalLogger.w("Tape", "eval: $e")
+        var text = s.tapeText
+        var sel = s.tapeSel
+        var finalDoc = doc
+        var finalEval = eval
+        TapeFormatter.patchBalances(text, doc, eval, decimals, s.settings.indent, s.settings.grouping)
+            ?.let { patched ->
+                val doc2 = CalcFile.parse(patched)
+                val eval2 = TapeEvaluator.evaluate(doc2.lines, decimals)
+                sel = mapCursor(s.tapeSel, s.tapeText, patched)
+                text = patched
+                finalDoc = doc2
+                finalEval = eval2
+            }
+        for (w in finalDoc.warnings) NcalLogger.w("Tape", "import: $w")
+        for (e in finalEval.errors) NcalLogger.w("Tape", "eval: $e")
         NcalLogger.d(
             "Tape",
-            "eval why=$why lines=${doc.lines.size} subs=${eval.subtotals.size} " +
-                "grand=${eval.grandTotal} errs=${eval.errors.size}",
+            "eval why=$why lines=${finalDoc.lines.size} subs=${finalEval.subtotals.size} " +
+                "grand=${finalEval.grandTotal} errs=${finalEval.errors.size}",
         )
         _state.update {
             it.copy(
-                totalText = fmt(eval.grandTotal),
-                grandText = fmt(eval.grandTotal),
-                errors = eval.errors,
+                tapeText = text,
+                tapeSel = sel,
+                totalText = fmt(finalEval.grandTotal),
+                grandText = fmt(finalEval.grandTotal),
+                errors = finalEval.errors,
                 decimals = decimals,
             )
         }
+    }
+
+    /** Remap a cursor across a line-count-preserving rewrite (same line, clamped column). */
+    private fun mapCursor(sel: TextRange, oldText: String, newText: String): TextRange {
+        fun toLineCol(text: String, off: Int): Pair<Int, Int> {
+            val lines = text.split("\n")
+            var rest = off.coerceIn(0, text.length)
+            var li = 0
+            while (li < lines.size - 1 && rest > lines[li].length) {
+                rest -= lines[li].length + 1
+                li++
+            }
+            return li to rest
+        }
+        val newLines = newText.split("\n")
+        fun toOffset(li: Int, col: Int): Int {
+            val l = li.coerceIn(0, newLines.size - 1)
+            return newLines.take(l).sumOf { it.length + 1 } + col.coerceAtMost(newLines[l].length)
+        }
+        val (l1, c1) = toLineCol(oldText, sel.start)
+        val (l2, c2) = toLineCol(oldText, sel.end)
+        return TextRange(toOffset(l1, c1), toOffset(l2, c2))
     }
 
     private fun scheduleSave() {
