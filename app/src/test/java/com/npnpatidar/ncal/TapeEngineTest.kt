@@ -578,7 +578,6 @@ VARINFO=
         val eval = TapeEvaluator.evaluate(doc.lines, 2)
         assertAmount("0", eval.grandTotal)
     }
-}
 
     @Test
     fun commaDecimalReadsAsDecimal() {
