@@ -10,8 +10,12 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.TextSelectionColors
+import androidx.compose.foundation.text.LocalTextSelectionColors
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -79,6 +83,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.IntrinsicSize
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -135,6 +140,8 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
     val keyboard = LocalSoftwareKeyboardController.current
     // ABC mode: cursor goes straight into the note and the keyboard opens.
     // CALC mode: cursor follows keys/finger, keyboard never auto-shows.
+    // Opening the drawer always dismisses the keyboard first (else it stays
+    // up behind the drawer); closing it restores ABC state.
     LaunchedEffect(state.keypadMode, showSettings) {
         if (showSettings) return@LaunchedEffect
         if (state.keypadMode == KeypadMode.SYSTEM) {
@@ -142,6 +149,14 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
             keyboard?.show()
         } else if (state.keypadMode == KeypadMode.CALC) {
             tapeFocus.requestFocus()
+        }
+    }
+    LaunchedEffect(drawerState.currentValue) {
+        if (drawerState.currentValue == DrawerValue.Open) {
+            keyboard?.hide()
+        } else if (state.keypadMode == KeypadMode.SYSTEM && !showSettings) {
+            tapeFocus.requestFocus()
+            keyboard?.show()
         }
     }
 
@@ -295,12 +310,25 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                     // Tapping moves it freely; only ABC raises the keyboard.
                     val latestFont by rememberUpdatedState(st.tapeFontSp)
                     val cursorColor = MaterialTheme.colorScheme.primary
+                    // No native selection handles anywhere: only our cursor ever
+                    // shows, so the two can never detach from each other.
+                    val noHandles = LocalTextSelectionColors.current.copy(
+                        handleColor = Color.Transparent,
+                    )
+                    // Outer scroll state: text and cursor scroll as one unit.
+                    // Fresh per note; follows typing in CALC, free elsewhere.
+                    val listScroll = remember(state.noteId) { ScrollState(0) }
+                    LaunchedEffect(state.tapeText, state.keypadMode) {
+                        if (state.keypadMode == KeypadMode.CALC) {
+                            listScroll.scrollTo(listScroll.maxValue)
+                        }
+                    }
                     // Blinking cursor like the reference: solid when unfocused.
                     val blinkAlpha by rememberInfiniteTransition(label = "cursor").animateFloat(
                         initialValue = 1f,
                         targetValue = 0f,
                         animationSpec = infiniteRepeatable(
-                            animation = tween(durationMillis = 500),
+                            animation = tween(durationMillis = 1000),
                             repeatMode = RepeatMode.Restart,
                         ),
                         label = "cursorBlink",
@@ -311,7 +339,7 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                         BasicTextField(
                             value = TextFieldValue(state.tapeText, state.tapeSel),
                             onValueChange = vm::onTapeChange,
-                            modifier = Modifier.fillMaxWidth().weight(1f).focusRequester(tapeFocus)
+                            modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max).focusRequester(tapeFocus)
                                 .onFocusChanged { fieldFocused = it.isFocused }
                                 .pinchZoom(
                                     getFont = { latestFont },
@@ -329,17 +357,9 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                             cursorBrush = SolidColor(Color.Transparent),
                             onTextLayout = { textLayout = it },
                             decorationBox = { inner ->
-                                Box(
-                                    modifier = Modifier
-                                        .border(
-                                            if (fieldFocused) 2.dp else 1.dp,
-                                            if (fieldFocused) MaterialTheme.colorScheme.primary
-                                            else MaterialTheme.colorScheme.outline,
-                                            RoundedCornerShape(4.dp),
-                                        )
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .padding(16.dp, 12.dp),
-                                ) {
+                                // Plain box: border/padding live on the outer
+                                // frame so this whole block scrolls as one.
+                                Box {
                                     inner()
                                     val caret = state.tapeSel.end.coerceIn(0, state.tapeText.length)
                                     val rect = try {
@@ -363,11 +383,32 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                             },
                         )
                     }
-                    if (systemMode) {
-                        tapeField()
-                    } else {
-                        CompositionLocalProvider(LocalTextInputService provides null) {
-                            tapeField()
+                    // Fixed frame (border never scrolls); inside, text +
+                    // cursor scroll together and pinch still works.
+                    Box(
+                        modifier = Modifier.fillMaxWidth().weight(1f)
+                            .border(
+                                if (fieldFocused) 2.dp else 1.dp,
+                                if (fieldFocused) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.outline,
+                                RoundedCornerShape(4.dp),
+                            )
+                            .clip(RoundedCornerShape(4.dp)),
+                    ) {
+                        Column(
+                            modifier = Modifier.verticalScroll(listScroll).padding(16.dp, 12.dp),
+                        ) {
+                            CompositionLocalProvider(
+                                LocalTextSelectionColors provides noHandles,
+                            ) {
+                                if (systemMode) {
+                                    tapeField()
+                                } else {
+                                    CompositionLocalProvider(LocalTextInputService provides null) {
+                                        tapeField()
+                                    }
+                                }
+                            }
                         }
                     }
 
