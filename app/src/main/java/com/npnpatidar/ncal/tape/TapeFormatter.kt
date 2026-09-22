@@ -37,8 +37,11 @@ object TapeFormatter {
                     if (line.comment.isNotBlank()) "${line.op} $n  ${line.comment}"
                     else "${line.op} $n".trimEnd()
                 }
-                is TapeLine.Balance ->
-                    "+ ${num(line.value, false).padEnd(width)}".trimEnd()
+                is TapeLine.Balance -> {
+                    val n = num(line.value, false).padEnd(width)
+                    if (line.comment.isNotBlank()) "+ $n  ${line.comment}"
+                    else "+ $n".trimEnd()
+                }
                 is TapeLine.Separator -> CalcFile.SEPARATOR
                 is TapeLine.Blank -> ""
                 is TapeLine.Heading -> line.raw

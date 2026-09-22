@@ -27,8 +27,10 @@ sealed interface TapeLine {
     /** ` ------------------ ` (18 dashes). Purely visual block boundary. */
     data object Separator : TapeLine
 
-    /** Post-separator `+ <total>` restatement. Display-only, never re-added. */
-    data class Balance(val value: BigDecimal) : TapeLine
+    /** Post-separator `+ <total> [comment]` restatement. Display-only for math
+     * (the value is recomputed), but the [comment] is user content and is
+     * preserved verbatim through pretty-print, save and export. */
+    data class Balance(val value: BigDecimal, val comment: String = "") : TapeLine
 
     /** Empty line: starts an independent calculation (running total resets). */
     data object Blank : TapeLine

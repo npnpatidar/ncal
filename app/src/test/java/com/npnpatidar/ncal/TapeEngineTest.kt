@@ -198,6 +198,27 @@ VARINFO=
     }
 
     @Test
+    fun balanceCommentSurvivesPrettyAndRoundTrip() {
+        // Description typed on a subtotal line must never be deleted by `=`.
+        val pretty = TapeFormatter.pretty(
+            " + 10.00 a\n ------------------ \n + 10.00 kept\n",
+            2,
+        )
+        assertEquals(
+            "+ 10.00  a\n ------------------ \n+ 10.00  kept\n",
+            pretty,
+        )
+        val doc = CalcFile.parse(pretty)
+        val bal = doc.lines.filterIsInstance<TapeLine.Balance>().single()
+        assertEquals("kept", bal.comment)
+        val eval = TapeEvaluator.evaluate(doc.lines, 2)
+        assertEquals(BigDecimal("10.00"), eval.grandTotal.setScale(2))
+        // Canonical export keeps it too.
+        val out = CalcFile.write(doc, eval.subtotals)
+        assertTrue(out.contains("10.00 kept"))
+    }
+
+    @Test
     fun plainDashSeparatorClosesBlock() {
         val doc = CalcFile.parse(" + 5\n------------------\n + 3\n")
         val eval = TapeEvaluator.evaluate(doc.lines, 2)

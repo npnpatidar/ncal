@@ -90,11 +90,12 @@ object CalcFile {
         }
 
         // Post-pass: `+X` directly after a separator is a balance restatement.
+        // The comment (if any) is user content and survives.
         val fixed = lines.mapIndexed { i, l ->
             if (l is TapeLine.Entry && l.op == '+' && !l.isPercent &&
                 i > 0 && lines[i - 1] is TapeLine.Separator
             ) {
-                TapeLine.Balance(l.amount)
+                TapeLine.Balance(l.amount, l.comment)
             } else l
         }
         return TapeDoc(meta, fixed, warnMsgs)
@@ -134,7 +135,7 @@ object CalcFile {
                 is TapeLine.Separator -> body.add(SEPARATOR)
                 is TapeLine.Balance -> {
                     val v = balances.getOrNull(bi++) ?: line.value
-                    body.add(formatEntry('+', v, false, "", m))
+                    body.add(formatEntry('+', v, false, line.comment, m))
                 }
                 is TapeLine.Blank -> body.add("")
                 is TapeLine.Heading -> body.add(line.raw)
