@@ -2,6 +2,7 @@
 
 Notepad-tape calculator for Android (CalcTape-style), built with Kotlin + Jetpack Compose.
 Type lines like `+ 119.00 bob`, close a block with `=`, edit anything — everything recalculates.
+Pinch/spread with two fingers to zoom the notepad font (single-finger scroll and typing unaffected).
 
 ## Build (GitHub only)
 
