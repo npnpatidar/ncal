@@ -25,7 +25,6 @@ object CalcFile {
     // Head number and inline `op number` splits (matchAt/find: no anchors).
     private val headNumRe = Regex("""([0-9][0-9.,]*)(%?)""")
     private val splitRe = Regex("""([+\-*/^])\s*([0-9][0-9.,]*)(%?)""")
-    private val headingRe = Regex("""^(#+)\s?(.*)$""")
 
     fun parse(text: String): TapeDoc {
         val clean = text.removePrefix("\uFEFF")
@@ -68,7 +67,8 @@ object CalcFile {
                     if (raws == null) {
                         // Old warning semantics: an op-led line with no number
                         // warns; plain text stays silent.
-                        if (ln.trimStart().firstOrNull() in "+-*/^") {
+                        val lead = ln.trimStart().firstOrNull()
+                        if (lead != null && lead in setOf('+', '-', '*', '/', '^')) {
                             warnMsgs.add("line ${idx + 1}: bad number, kept as comment")
                         }
                         lines.add(TapeLine.Comment(ln))
@@ -185,7 +185,7 @@ object CalcFile {
         var rest: String
         var op: Char
         val first = trimmed[0]
-        val explicitOp = first in "+-*/^"
+        val explicitOp = first == '+' || first == '-' || first == '*' || first == '/' || first == '^'
         if (explicitOp) {
             op = first
             rest = trimmed.substring(1).trimStart()

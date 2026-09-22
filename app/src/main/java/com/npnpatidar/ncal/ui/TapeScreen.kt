@@ -23,7 +23,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
@@ -167,7 +167,7 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                         }
                     }
                     TextButton(onClick = { importLauncher.launch("*/*") }) {
-                        Icon(Icons.Filled.Download, contentDescription = null)
+                        Icon(Icons.Filled.ArrowDownward, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Text("Import .calc / .txt")
                     }
