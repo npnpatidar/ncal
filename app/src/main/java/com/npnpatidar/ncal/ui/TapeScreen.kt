@@ -312,8 +312,9 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                     val cursorColor = MaterialTheme.colorScheme.primary
                     // No native selection handles anywhere: only our cursor ever
                     // shows, so the two can never detach from each other.
-                    val noHandles = LocalTextSelectionColors.current.copy(
+                    val noHandles = TextSelectionColors(
                         handleColor = Color.Transparent,
+                        backgroundColor = LocalTextSelectionColors.current.backgroundColor,
                     )
                     // Outer scroll state: text and cursor scroll as one unit.
                     // Fresh per note; follows typing in CALC, free elsewhere.
