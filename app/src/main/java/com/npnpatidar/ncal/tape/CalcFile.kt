@@ -184,7 +184,7 @@ object CalcFile {
             //   "10,00,000" -> 1000000, "1,2,3" -> 123).
             // Known trade-off: ambiguous "1,00" reads as 1.00, not 100.
             if (nospace.matches(Regex("""^\d+,\d{1,2}$""")) ||
-                nospace.matches(Regex("""^\d{1,3}(\.\d{3})*,\d+$"""))
+                nospace.matches(Regex("""^\d{1,3}(\.\d{3})+,\d+$"""))
             ) {
                 return nospace.replace(".", "").replace(",", ".")
             }

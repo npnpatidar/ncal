@@ -500,13 +500,13 @@ VARINFO=
     fun thousandGroupingStaysGrouping() {
         // "1,000" (3 trailing digits) is grouping, not decimal.
         val eval = TapeEvaluator.evaluate(CalcFile.parse("1,000\n").lines, 2)
-        assertEquals(BigDecimal("1000"), eval.grandTotal.stripTrailingZeros())
+        assertEquals(0, BigDecimal("1000").compareTo(eval.grandTotal))
     }
 
     @Test
     fun indianGroupingStaysGrouping() {
         val eval = TapeEvaluator.evaluate(CalcFile.parse("10,00,000\n").lines, 2)
-        assertEquals(BigDecimal("1000000"), eval.grandTotal.stripTrailingZeros())
+        assertEquals(0, BigDecimal("1000000").compareTo(eval.grandTotal))
     }
 
     @Test
