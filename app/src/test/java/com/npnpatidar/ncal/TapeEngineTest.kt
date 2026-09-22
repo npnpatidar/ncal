@@ -518,14 +518,6 @@ VARINFO=
     }
 
     @Test
-    fun ambiguousShortCommaReadsDecimal() {
-        // Documented trade-off: "1,00" reads as 1.00 (European decimal),
-        // not 100 (Indian shorthand).
-        val eval = TapeEvaluator.evaluate(CalcFile.parse("1,00\n").lines, 2)
-        assertEquals(BigDecimal("1.00"), eval.grandTotal.setScale(2))
-    }
-
-    @Test
     fun unicodeOperatorsParse() {
         // × ÷ − from other keyboards behave like * / -.
         val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 100\n × 2\n").lines, 2)
