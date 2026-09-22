@@ -62,16 +62,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.hapticfeedback.LocalHapticFeedback
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalTextInputService
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -463,7 +461,7 @@ private fun KeypadGrid(
     hapticsOn: Boolean,
     soundOn: Boolean,
 ) {
-    val haptics = LocalHapticFeedback.current
+    val haptics = LocalView.current
     val context = LocalContext.current
     val audio = remember(context) {
         context.getSystemService(android.media.AudioManager::class.java)
@@ -471,7 +469,7 @@ private fun KeypadGrid(
     fun press(action: () -> Unit) {
         if (hapticsOn) {
             try {
-                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                haptics.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
             } catch (_: Throwable) {
             }
         }
