@@ -193,10 +193,28 @@ VARINFO=
     }
 
     @Test
-    fun dateLikeLineStaysComment() {
-        val doc = CalcFile.parse("2026-09-21\n + 1\n")
+    fun bareSpacelessCompoundSplits() {
+        // `100+5` computes like the calculator keys (CalcTape behavior).
+        val eval = TapeEvaluator.evaluate(CalcFile.parse("100+5\n").lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertEquals(BigDecimal("105"), eval.grandTotal.stripTrailingZeros())
+    }
+
+    @Test
+    fun textLedDateStaysComment() {
+        val doc = CalcFile.parse("trip 2026-09-21\n + 1\n")
         val eval = TapeEvaluator.evaluate(doc.lines, 2)
         assertEquals(BigDecimal("1"), eval.grandTotal.stripTrailingZeros())
+    }
+
+    @Test
+    fun loneOperatorLineIsSilent() {
+        // Mid-typing ` + ` must not raise (or log) an error.
+        val doc = CalcFile.parse(" + \n + 5\n")
+        assertTrue(doc.warnings.isEmpty())
+        val eval = TapeEvaluator.evaluate(doc.lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertEquals(BigDecimal("5"), eval.grandTotal.stripTrailingZeros())
     }
 
     @Test

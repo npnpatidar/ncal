@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -246,8 +247,10 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                 },
                 snackbarHost = { SnackbarHost(snack) },
             ) { pad ->
+                // imePadding pins the strip/keypad above the system keyboard;
+                // paired with adjustPan (manifest) there is no double shift.
                 Column(
-                    modifier = Modifier.fillMaxSize().padding(pad).padding(horizontal = 12.dp),
+                    modifier = Modifier.fillMaxSize().padding(pad).padding(horizontal = 12.dp).imePadding(),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     // Notepad (editable area). Outside SYSTEM mode the field is

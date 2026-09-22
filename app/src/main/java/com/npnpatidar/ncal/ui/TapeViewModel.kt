@@ -13,6 +13,7 @@ import com.npnpatidar.ncal.tape.CalcFile
 import com.npnpatidar.ncal.tape.CalcMeta
 import com.npnpatidar.ncal.tape.TapeEvaluator
 import com.npnpatidar.ncal.tape.TapeFormatter
+import com.npnpatidar.ncal.tape.TapeLine
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -312,16 +313,26 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** `=`: close the block — append separator + recomputed balance line,
-     * then re-layout the tape in 3 left-aligned columns. Ignored when there
-     * is no open block (empty tape, or tape already ending at a subtotal). */
+     * then re-layout the tape in 3 left-aligned columns. On an empty tape it
+     * says so; on an already-closed block, Enter/`=` inserts a blank line
+     * that starts a brand-new independent calculation below it. */
     fun equals() {
         // NOTE: no trailing newline — parse() would turn it into a Blank line,
         // which resets the open section and made `=` append a 0.00000 balance.
         val cur = _state.value.tapeText.trimEnd()
         val probe = CalcFile.parse(cur)
-        if (!TapeEvaluator.hasOpenEntries(probe.lines)) {
+        if (probe.lines.none { it is TapeLine.Entry }) {
             _state.update { it.copy(message = "Nothing to total") }
-            NcalLogger.d("Tape", "equals ignored: no open entries")
+            NcalLogger.d("Tape", "equals ignored: empty tape")
+            return
+        }
+        if (!TapeEvaluator.hasOpenEntries(probe.lines)) {
+            pushUndo(_state.value.tapeText)
+            val next = "$cur\n"
+            _state.update { it.copy(tapeText = next, tapeSel = TextRange(next.length)) }
+            NcalLogger.i("Tape", "equals: new section after closed block")
+            reevaluate("new-section")
+            scheduleSave()
             return
         }
         pushUndo(_state.value.tapeText)

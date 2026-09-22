@@ -65,10 +65,13 @@ object CalcFile {
                 else -> {
                     val raws = tokenizeEntryLine(ln.trim())
                     if (raws == null) {
-                        // Old warning semantics: an op-led line with no number
-                        // warns; plain text stays silent.
-                        val lead = ln.trimStart().firstOrNull()
-                        if (lead != null && lead in setOf('+', '-', '*', '/', '^')) {
+                        // A lone operator being typed (` + `) is silent;
+                        // garbage after an operator warns once.
+                        val t = ln.trim()
+                        val leadOp = t.firstOrNull()?.let { o ->
+                            o == '+' || o == '-' || o == '*' || o == '/' || o == '^'
+                        } == true
+                        if (leadOp && t.substring(1).trim().isNotEmpty()) {
                             warnMsgs.add("line ${idx + 1}: bad number, kept as comment")
                         }
                         lines.add(TapeLine.Comment(ln))
@@ -179,12 +182,9 @@ object CalcFile {
     /**
      * Split an entry line on inline `op number` boundaries (CalcTape behavior:
      * an operator behind a number starts the next calculation line, even in the
-     * middle of the comment), so ABC-typed `+ 100 + 20` works exactly like the
-     * calculator keys. Returns null when the line isn't an entry at all.
-     *
-     * Guards: lines must start with an operator or a digit; bare-led lines
-     * additionally require the first number to end or hit whitespace/`%`, so
-     * dates like `2026-09-21` and words stay comments.
+     * middle of the comment), so ABC-typed `+ 100 + 20` — or even `100+5` —
+     * works exactly like the calculator keys. Returns null when the line
+     * doesn't start with an operator or a digit (pure text stays a comment).
      */
     private fun tokenizeEntryLine(trimmed: String): List<RawEntry>? {
         if (trimmed.isEmpty()) return null
@@ -201,6 +201,7 @@ object CalcFile {
         } else {
             return null
         }
+        val head = headNumRe.matchAt(rest, 0) ?: return null
         val head = headNumRe.matchAt(rest, 0) ?: return null
         if (!explicitOp) {
             val after = rest.substring(head.range.last + 1)
