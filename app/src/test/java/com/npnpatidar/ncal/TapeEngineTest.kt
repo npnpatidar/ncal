@@ -547,6 +547,37 @@ VARINFO=
         assertEquals(listOf(BigDecimal("5.00")), eval.subtotals.map { it.setScale(2) })
         assertEquals(BigDecimal("5.00"), eval.grandTotal.setScale(2))
     }
+
+    @Test
+    fun formulaParensWarnButPreserved() {
+        // `(5+3)` can't be calculated yet: kept verbatim, with a hint.
+        val doc = CalcFile.parse("(5+3) q2 report\n")
+        assertTrue(doc.warnings.any { it.contains("brackets") })
+        assertTrue(doc.lines.first() is TapeLine.Comment)
+    }
+
+    @Test
+    fun proseParensStaySilent() {
+        val doc = CalcFile.parse("(see receipt)\n(3 nights)\n")
+        assertTrue(doc.warnings.isEmpty())
+    }
+
+    @Test
+    fun variableAssignWarnsButPreserved() {
+        // `x = 5` isn't a variable yet: kept verbatim, with a hint.
+        val doc = CalcFile.parse("x = 5\n")
+        assertTrue(doc.warnings.any { it.contains("variables") })
+        assertTrue(doc.lines.first() is TapeLine.Comment)
+    }
+
+    @Test
+    fun variableUseIsQuietZero() {
+        // `+ x` reads as +0 "x" (no warning, no math) until variables exist.
+        val doc = CalcFile.parse(" + x\n")
+        assertTrue(doc.warnings.isEmpty())
+        val eval = TapeEvaluator.evaluate(doc.lines, 2)
+        assertAmount("0", eval.grandTotal)
+    }
 }
 
     @Test

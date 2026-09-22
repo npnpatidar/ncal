@@ -32,9 +32,29 @@ object CalcFile {
     private val splitRe = Regex("([+\\-*/^])\\s*([+-]?\\s*$NUM_CORE)(%?)")
     private val bareOpRe = Regex("""^\s*[+\-*/^]\s*([+-]\s*)?${'$'}""")
     private val currencyLeadRe = Regex("""^[$€₹£¥¢₩₽₺₫₪\s]+""")
+    private val varAssignRe = Regex("""^[A-Za-z_][A-Za-z0-9_]*\s*=.*""")
 
     /** True for an open operator line with no digits yet (` * `, ` *- `). */
     fun isBareOpLine(raw: String): Boolean = bareOpRe.matches(raw)
+
+    /**
+     * Hint when a comment line looks like an unsupported construct: brackets
+     * holding a calculation (`(5+3)`), or a variable definition (`x = 5`).
+     * The line is always preserved; this just explains why it doesn't count.
+     * Pure prose (`(see receipt)`, `call mom`) stays silent.
+     */
+    private fun unsupportedHint(ln: String, idx: Int): String? {
+        val t = ln.trim()
+        if (t.contains('(') && t.contains(')') && t.any { it.isDigit() } &&
+            t.any { it == '+' || it == '-' || it == '*' || it == '/' || it == '^' || it == '%' }
+        ) {
+            return "line ${idx + 1}: brackets aren't calculated yet — kept as a note"
+        }
+        if (varAssignRe.matches(t)) {
+            return "line ${idx + 1}: variables aren't supported yet — kept as a note"
+        }
+        return null
+    }
 
     fun parse(text: String): TapeDoc {
         val clean = text.removePrefix("\uFEFF")
@@ -79,13 +99,17 @@ object CalcFile {
                     val raws = tokenizeEntryLine(ln.trim())
                     if (raws == null) {
                         // A lone operator being typed (` + `) is silent;
-                        // garbage after an operator warns once.
+                        // garbage after an operator warns once — unless a more
+                        // specific hint applies (brackets/variables below).
                         val t = ln.trim()
                         val leadOp = t.firstOrNull()?.let { o ->
                             o == '+' || o == '-' || o == '*' || o == '/' || o == '^'
                         } == true
-                        if (leadOp && t.substring(1).trim().isNotEmpty()) {
-                            warnMsgs.add("line ${idx + 1}: bad number, kept as comment")
+                        val hint = unsupportedHint(ln, idx)
+                        when {
+                            hint != null -> warnMsgs.add(hint)
+                            leadOp && t.substring(1).trim().isNotEmpty() ->
+                                warnMsgs.add("line ${idx + 1}: bad number, kept as comment")
                         }
                         lines.add(TapeLine.Comment(ln))
                     } else {

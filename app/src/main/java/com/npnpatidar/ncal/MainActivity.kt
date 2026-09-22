@@ -4,8 +4,10 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.ViewModelProvider
 import com.npnpatidar.ncal.logging.NcalLogger
 import com.npnpatidar.ncal.ui.TapeScreen
+import com.npnpatidar.ncal.ui.TapeViewModel
 
 class MainActivity : ComponentActivity() {
 
@@ -34,6 +36,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         NcalLogger.d("App", "onPause")
+        try {
+            ViewModelProvider(this)[TapeViewModel::class.java].flushNow()
+        } catch (t: Throwable) {
+            NcalLogger.e("App", "flush on pause failed", t)
+        }
         super.onPause()
     }
 }

@@ -364,6 +364,12 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         if (!TapeEvaluator.hasOpenEntries(probe.lines)) {
             val lastRaw = cur.lines().lastOrNull { it.isNotBlank() } ?: ""
             if (!CalcFile.isBareOpLine(lastRaw)) {
+                // Already sitting on a fresh blank section: ignore repeats so
+                // hammering `=` can't stack empty lines.
+                if (_state.value.tapeText.endsWith("\n\n")) {
+                    NcalLogger.d("Tape", "equals ignored: already on a fresh section")
+                    return
+                }
                 pushUndo(_state.value.tapeText)
                 val next = "$cur\n"
                 _state.update { it.copy(tapeText = next, tapeSel = TextRange(next.length)) }
@@ -480,6 +486,13 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun clearMessage() = _state.update { it.copy(message = null) }
+
+    /** Synchronous save for lifecycle edges (onPause) — closes the <800ms
+     * autosave gap so backgrounding the app never loses keystrokes. */
+    fun flushNow() {
+        saveJob?.cancel()
+        saveCurrent()
+    }
 
     // ---- internals ----
 
