@@ -6,7 +6,6 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,6 +23,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
@@ -35,13 +35,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -144,23 +144,40 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                     }
                     LazyColumn(modifier = Modifier.weight(1f)) {
                         items(state.notes, key = { it.id }) { note ->
-                            // Long-press a note for rename / duplicate /
-                            // export / delete; tap to open it.
-                            Box(
-                                modifier = Modifier.padding(horizontal = 8.dp)
-                                    .combinedClickable(
+                            // ONE gesture handler per row: tap opens, long-press
+                            // menus. (A nested clickable inside
+                            // NavigationDrawerItem starved both, so the row is
+                            // custom.) The ⋮ button opens the same menu.
+                            val selected = note.id == state.noteId
+                            Surface(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+                                shape = MaterialTheme.shapes.large,
+                                color = if (selected) MaterialTheme.colorScheme.secondaryContainer
+                                else Color.Transparent,
+                            ) {
+                                Row(
+                                    modifier = Modifier.combinedClickable(
                                         onClick = {
                                             vm.selectNote(note.id)
                                             scope.launch { drawerState.close() }
                                         },
                                         onLongClick = { noteMenu = note },
-                                    ),
-                            ) {
-                                NavigationDrawerItem(
-                                    label = { Text(note.name) },
-                                    selected = note.id == state.noteId,
-                                    onClick = {},
-                                )
+                                    ).padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        note.name,
+                                        modifier = Modifier.weight(1f),
+                                        color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer
+                                        else MaterialTheme.colorScheme.onSurface,
+                                    )
+                                    IconButton(onClick = { noteMenu = note }) {
+                                        Icon(
+                                            Icons.Filled.MoreVert,
+                                            contentDescription = "Note options",
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
