@@ -587,8 +587,6 @@ private fun BottomPinnedControls(vm: TapeViewModel, state: TapeUiState) {
                     }
                 }
             }
-        }
-
 /**
  * Pinch-to-zoom (two-finger spread) for the notepad, like image zoom.
  * Anchor-based: when the second finger lands we record the finger distance
