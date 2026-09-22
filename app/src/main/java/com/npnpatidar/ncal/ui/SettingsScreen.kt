@@ -112,7 +112,7 @@ fun SettingsScreen(
                 Slider(
                     value = settings.keyHeightPortDp,
                     onValueChange = { onUpdate(settings.copy(keyHeightPortDp = it)) },
-                    valueRange = 40f..80f,
+                    valueRange = 20f..80f,
                 )
             }
             item { Section("Keyboard height landscape (${settings.keyHeightLandDp.toInt()}dp)") }
@@ -120,7 +120,7 @@ fun SettingsScreen(
                 Slider(
                     value = settings.keyHeightLandDp,
                     onValueChange = { onUpdate(settings.copy(keyHeightLandDp = it)) },
-                    valueRange = 36f..64f,
+                    valueRange = 20f..64f,
                 )
             }
             item {
