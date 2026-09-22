@@ -22,9 +22,14 @@ object CalcFile {
 
     private val separatorRe = Regex("""^\s*-{2,}\s?$""")
     private val headingRe = Regex("""^(#+)\s?(.*)$""")
-    // Head number and inline `op number` splits (matchAt/find: no anchors).
-    private val headNumRe = Regex("""([0-9][0-9.,]*)(%?)""")
+    // Head number (optional unary sign glued to the digits, e.g. `* -2`)
+    // and inline `op number` splits (matchAt/find: no anchors).
+    private val headNumRe = Regex("""([+-]?\s*[0-9][0-9.,]*)(%?)""")
     private val splitRe = Regex("""([+\-*/^])\s*([0-9][0-9.,]*)(%?)""")
+    private val bareOpRe = Regex("""^\s*[+\-*/^]\s*([+-]\s*)?${'$'}""")
+
+    /** True for an open operator line with no digits yet (` * `, ` *- `). */
+    fun isBareOpLine(raw: String): Boolean = bareOpRe.matches(raw)
 
     fun parse(text: String): TapeDoc {
         val clean = text.removePrefix("\uFEFF")
@@ -170,7 +175,7 @@ object CalcFile {
     }
 
     private fun normalizeNumber(raw: String, meta: CalcMeta): String {
-        var s = raw
+        var s = raw.replace(" ", "")
         if (meta.thouSep != '.') s = s.replace(meta.thouSep.toString(), "")
         else s = s.replace(",", "")
         if (meta.decSep != '.') s = s.replace(meta.decSep, '.')

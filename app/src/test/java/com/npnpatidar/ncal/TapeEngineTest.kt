@@ -393,4 +393,37 @@ VARINFO=
         assertTrue(eval.errors.isEmpty())
         assertEquals(BigDecimal("100.00"), eval.grandTotal.setScale(2))
     }
+
+    @Test
+    fun signedOperandAfterOperator() {
+        // `* -2` on a 30 subtotal = -60, exactly like the reference tape.
+        val doc = CalcFile.parse(" + 30\n ------------------ \n + 30.00 \n * -2\n")
+        val eval = TapeEvaluator.evaluate(doc.lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertEquals(listOf(BigDecimal("30.00")), eval.subtotals.map { it.setScale(2) })
+        assertEquals(BigDecimal("-60.00"), eval.grandTotal.setScale(2))
+    }
+
+    @Test
+    fun isBareOpLineDetection() {
+        assertTrue(CalcFile.isBareOpLine(" * "))
+        assertTrue(CalcFile.isBareOpLine(" *- "))
+        assertTrue(CalcFile.isBareOpLine(" + "))
+        assertFalse(CalcFile.isBareOpLine(" + 5"))
+        assertFalse(CalcFile.isBareOpLine(" + 5.00 x"))
+        assertFalse(CalcFile.isBareOpLine("hello"))
+        assertFalse(CalcFile.isBareOpLine(""))
+    }
+
+    @Test
+    fun markLinesColorsAndBolds() {
+        val doc = CalcFile.parse(" + 5\n - 12\n ------------------ \n - 7.00\n * -2\n")
+        val eval = TapeEvaluator.evaluate(doc.lines, 2)
+        val marks = TapeFormatter.markLines(doc, eval)
+        assertEquals(TapeFormatter.LineMark(bold = false, negative = false), marks[0])
+        assertEquals(TapeFormatter.LineMark(bold = false, negative = true), marks[1])
+        assertEquals(TapeFormatter.LineMark(bold = false, negative = false), marks[2])
+        assertEquals(TapeFormatter.LineMark(bold = true, negative = true), marks[3])
+        assertEquals(TapeFormatter.LineMark(bold = false, negative = true), marks[4])
+    }
 }

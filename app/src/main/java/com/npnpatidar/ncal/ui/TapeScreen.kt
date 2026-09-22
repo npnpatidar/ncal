@@ -78,7 +78,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalTextInputService
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -271,9 +274,33 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     val latestFont by rememberUpdatedState(st.tapeFontSp)
+                    // Negative amounts render red, subtotals bold — like the
+                    // reference tape. Spans overlay the monospace base style.
+                    val negativeRed = if (dark) Color(0xFFEF9A9A) else Color(0xFFC62828)
+                    val annotated = remember(state.tapeText, state.lineMarks) {
+                        buildAnnotatedString {
+                            append(state.tapeText)
+                            val lines = state.tapeText.split("\n")
+                            var offset = 0
+                            lines.forEachIndexed { i, ln ->
+                                val m = state.lineMarks.getOrNull(i)
+                                if (m != null && (m.bold || m.negative)) {
+                                    addStyle(
+                                        SpanStyle(
+                                            color = if (m.negative) negativeRed else Color.Unspecified,
+                                            fontWeight = if (m.bold) FontWeight.Bold else null,
+                                        ),
+                                        offset,
+                                        (offset + ln.length).coerceAtMost(state.tapeText.length),
+                                    )
+                                }
+                                offset += ln.length + 1
+                            }
+                        }
+                    }
                     val tapeField: @Composable () -> Unit = {
                         OutlinedTextField(
-                            value = TextFieldValue(state.tapeText, state.tapeSel),
+                            value = TextFieldValue(annotated, state.tapeSel),
                             onValueChange = vm::onTapeChange,
                             modifier = Modifier.fillMaxWidth().weight(1f).focusRequester(tapeFocus)
                                 .pinchZoom(
@@ -281,7 +308,7 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                                     onZoom = { vm.previewTapeFont(it) },
                                     onEnd = { vm.commitSettings() },
                                 ),
-                            readOnly = !systemMode,
+                            readOnly = state.keypadMode == KeypadMode.HIDDEN,
                             textStyle = MaterialTheme.typography.bodyLarge.copy(
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = st.tapeFontSp.sp,

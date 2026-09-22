@@ -31,6 +31,7 @@ enum class KeypadMode { CALC, SYSTEM, HIDDEN }
 data class TapeUiState(
     val tapeText: String = " + 0\n",
     val tapeSel: TextRange = TextRange.Zero,
+    val lineMarks: List<TapeFormatter.LineMark> = emptyList(),
     val totalText: String = "0",
     val grandText: String = "0",
     val memoryText: String = "0",
@@ -296,13 +297,29 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         scheduleSave()
     }
 
-    /** Keypad press: append a token at the end of the tape. */
+    /** Keypad press: append a token at the end of the tape. An operator key
+     * pressed on an open operator line (` * `) extends it (`-`/`+` become the
+     * operand sign: `*-`) or replaces it (`*`/`/`), exactly like CalcTape —
+     * it never strands a second line. */
     fun key(token: String) {
         val prev = _state.value.tapeText
         pushUndo(prev)
         // Trim trailing whitespace first so operator tokens ("\n + ") never
         // create an accidental blank line (a blank starts a new section).
-        val next = prev.trimEnd() + token
+        val trimmed = prev.trimEnd()
+        val lastLine = trimmed.substringAfterLast("\n")
+        val opChar = if (token.startsWith("\n")) token.trim().firstOrNull() else null
+        val next = if (
+            opChar != null &&
+            (opChar == '+' || opChar == '-' || opChar == '*' || opChar == '/' || opChar == '^') &&
+            CalcFile.isBareOpLine(lastLine)
+        ) {
+            val firstOp = lastLine.trim()[0]
+            val newLast = if (opChar == '+' || opChar == '-') " $firstOp $opChar" else " $opChar "
+            trimmed.dropLast(lastLine.length) + newLast
+        } else {
+            trimmed + token
+        }
         _state.update { it.copy(tapeText = next, tapeSel = TextRange(next.length)) }
         NcalLogger.d("Tape", "key=${token.trim()} lines=${next.lines().size}")
         reevaluate("key")
@@ -345,13 +362,18 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         if (!TapeEvaluator.hasOpenEntries(probe.lines)) {
-            pushUndo(_state.value.tapeText)
-            val next = "$cur\n"
-            _state.update { it.copy(tapeText = next, tapeSel = TextRange(next.length)) }
-            NcalLogger.i("Tape", "equals: new section after closed block")
-            reevaluate("new-section")
-            scheduleSave()
-            return
+            val lastRaw = cur.lines().lastOrNull { it.isNotBlank() } ?: ""
+            if (!CalcFile.isBareOpLine(lastRaw)) {
+                pushUndo(_state.value.tapeText)
+                val next = "$cur\n"
+                _state.update { it.copy(tapeText = next, tapeSel = TextRange(next.length)) }
+                NcalLogger.i("Tape", "equals: new section after closed block")
+                reevaluate("new-section")
+                scheduleSave()
+                return
+            }
+            // Dangling operator (` * `): fall through and close with the
+            // current total; the bare line stays as a neutral comment.
         }
         pushUndo(_state.value.tapeText)
         NcalLogger.d("Tape", "equals before: ${snapshot(cur)}")
@@ -506,6 +528,7 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(
                 tapeText = text,
                 tapeSel = sel,
+                lineMarks = TapeFormatter.markLines(finalDoc, finalEval),
                 totalText = fmt(finalEval.grandTotal),
                 grandText = fmt(finalEval.grandTotal),
                 errors = finalEval.errors,

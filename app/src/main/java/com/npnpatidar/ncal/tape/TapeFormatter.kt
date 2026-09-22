@@ -80,8 +80,9 @@ object TapeFormatter {
 
     /**
      * Effective display operator + magnitude: a negative `+X` shows as `- X`
-     * (and `-(-X)` as `+ X`), so the operator column carries only `+-*%/`
-     * and the number column stays aligned. Zero (including `-0.00`) stays `+`.
+     * (and `-(-X)` as `+ X`), so the operator column only ever carries the
+     * sign and the number column stays aligned. Zero (including `-0.00`)
+     * stays `+`.
      */
     fun displayParts(op: Char, amount: java.math.BigDecimal): Pair<Char, java.math.BigDecimal> {
         if ((op == '+' || op == '-') && amount.signum() < 0) {
@@ -137,6 +138,34 @@ object TapeFormatter {
         }
         return if (changed) out.joinToString("\n") else null
     }
+    /** Per-line display style: subtotals bold, negative amounts red. */
+    data class LineMark(val bold: Boolean, val negative: Boolean)
+
+    /**
+     * One mark per doc line (1:1, same order). Balance negativity uses the
+     * recomputed running totals so marks always agree with what [patchBalances]
+     * displays.
+     */
+    fun markLines(doc: TapeDoc, eval: EvalResult): List<LineMark> {
+        return doc.lines.mapIndexed { i, line ->
+            when (line) {
+                is TapeLine.Entry -> {
+                    val neg = if (line.op == '*' || line.op == '/' || line.op == '^') {
+                        line.amount.signum() < 0
+                    } else {
+                        displayParts(line.op, line.amount).first == '-'
+                    }
+                    LineMark(bold = false, negative = neg)
+                }
+                is TapeLine.Balance -> {
+                    val v = eval.balanceTotals[i] ?: line.value
+                    LineMark(bold = true, negative = v.signum() < 0)
+                }
+                else -> LineMark(bold = false, negative = false)
+            }
+        }
+    }
+
     /** Insert thousands separators into a plain scaled number (`1234567.89`). */
     fun groupNumber(s: String, grouping: Grouping): String {
         if (grouping == Grouping.OFF) return s
