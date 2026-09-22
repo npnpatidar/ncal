@@ -68,6 +68,9 @@ object CalcFile {
                 ln.isEmpty() -> lines.add(TapeLine.Blank)
                 separatorRe.matches(ln) ->
                     lines.add(TapeLine.Separator)
+                // A lone `=` typed in ABC closes the block, like Enter/=.
+                ln.trim() == "=" ->
+                    lines.add(TapeLine.Separator)
                 ln.trim().startsWith("#") -> {
                     val m = headingRe.matchEntire(ln.trim())!!
                     lines.add(TapeLine.Heading(m.groupValues[2], ln))

@@ -539,6 +539,17 @@ VARINFO=
     }
 
     @Test
+    fun bareEqualsClosesBlock() {
+        // A lone `=` typed in ABC works like Enter/=: closes the block.
+        val doc = CalcFile.parse(" + 5\n=\n")
+        assertTrue(doc.warnings.isEmpty())
+        val eval = TapeEvaluator.evaluate(doc.lines, 2)
+        assertEquals(listOf(BigDecimal("5.00")), eval.subtotals.map { it.setScale(2) })
+        assertEquals(BigDecimal("5.00"), eval.grandTotal.setScale(2))
+    }
+}
+
+    @Test
     fun commaDecimalReadsAsDecimal() {
         // "3,50" is three-fifty, not 350 (was 350 before the fix).
         val eval = TapeEvaluator.evaluate(CalcFile.parse("3,50\n").lines, 2)
