@@ -537,7 +537,6 @@ VARINFO=
         assertTrue(eval.errors.any { it.contains("invalid power") })
         assertAmount("-8", eval.grandTotal)
     }
-}
 
     @Test
     fun commaDecimalReadsAsDecimal() {
