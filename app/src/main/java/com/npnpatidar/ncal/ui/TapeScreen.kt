@@ -23,11 +23,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DrawerValue
@@ -167,9 +165,7 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                         }
                     }
                     TextButton(onClick = { importLauncher.launch("*/*") }) {
-                        Icon(Icons.Filled.ArrowDownward, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Import .calc / .txt")
+                        Text("⇩ Import .calc / .txt")
                     }
                     TextButton(onClick = {
                         showSettings = true
@@ -455,11 +451,11 @@ private fun KeypadGrid(
         }
         action()
     }
-    // Pair(display label, action). Display uses x ÷ - glyphs and an undo
-    // icon; inserted text stays ASCII.
+    // Triple: display label, optional vector icon, action. Display uses
+    // glyphs (undo arrow, backspace) and x ÷ - symbols; inserted text stays ASCII.
     val keys: List<KeyDef> = listOf(
         KeyDef(action = onClear, label = "AC"),
-        KeyDef(action = onUndo, icon = Icons.Filled.Undo),
+        KeyDef(action = onUndo, label = "↩"),
         KeyDef(action = onBackspace, label = "⌫"),
         KeyDef(action = { onOp("\n / ") }, label = "÷"),
         KeyDef(action = { onDigit("7") }, label = "7"),
@@ -491,8 +487,7 @@ private fun KeypadGrid(
                 modifier = Modifier.height(keyHeight),
                 contentPadding = PaddingValues(2.dp),
             ) {
-                if (key.icon != null) Icon(key.icon, contentDescription = key.label ?: "key")
-                else Text(key.label ?: "", fontSize = keyFontSp, maxLines = 1)
+                Text(key.label ?: "", fontSize = keyFontSp, maxLines = 1)
             }
         }
     }
@@ -501,5 +496,4 @@ private fun KeypadGrid(
 private data class KeyDef(
     val action: () -> Unit,
     val label: String? = null,
-    val icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
 )
