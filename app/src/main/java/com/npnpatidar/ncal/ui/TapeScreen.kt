@@ -59,8 +59,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -269,17 +269,17 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    val latestFont by rememberUpdatedState(st.tapeFontSp)
                     val tapeField: @Composable () -> Unit = {
                         OutlinedTextField(
                             value = TextFieldValue(state.tapeText, state.tapeSel),
                             onValueChange = vm::onTapeChange,
                             modifier = Modifier.fillMaxWidth().weight(1f).focusRequester(tapeFocus)
-                                .pinchZoom(st.tapeFontSp) { factor ->
-                                    val next = (st.tapeFontSp * factor).coerceIn(12f, 24f)
-                                    if (next != st.tapeFontSp) {
-                                        vm.updateSettings(st.copy(tapeFontSp = next))
-                                    }
-                                },
+                                .pinchZoom(
+                                    getFont = { latestFont },
+                                    onZoom = { vm.previewTapeFont(it) },
+                                    onEnd = { vm.commitSettings() },
+                                ),
                             readOnly = !systemMode,
                             textStyle = MaterialTheme.typography.bodyLarge.copy(
                                 fontFamily = FontFamily.Monospace,
@@ -471,34 +471,54 @@ private fun BottomPinnedControls(vm: TapeViewModel, state: TapeUiState) {
 
 /**
  * Pinch-to-zoom (two-finger spread) for the notepad, like image zoom.
- * Only takes over once a second finger lands: single-finger scroll, cursor
- * placement and selection pass straight through to the text field. The
- * [base] font size re-keys detection so every factor applies to fresh state.
+ * Anchor-based: when the second finger lands we record the finger distance
+ * and the current font; every move maps back to that anchor, so there is no
+ * drift and no per-frame persistence — [onZoom] previews live, [onEnd]
+ * commits once on release. Single-finger scroll, cursor and selection pass
+ * straight through to the text field. Never restarts mid-gesture (Unit key).
  */
-private fun Modifier.pinchZoom(base: Float, onZoom: (Float) -> Unit): Modifier =
-    pointerInput(base) {
-        awaitEachGesture {
-            awaitFirstDown(requireUnconsumed = false)
-            var prevDist: Float? = null
-            while (true) {
-                val event = awaitPointerEvent()
-                val pressed = event.changes.filter { it.pressed }
-                if (pressed.size < 2) {
-                    if (event.changes.all { !it.pressed }) break
-                    prevDist = null
-                    continue
+private fun Modifier.pinchZoom(
+    getFont: () -> Float,
+    onZoom: (Float) -> Unit,
+    onEnd: () -> Unit,
+): Modifier = pointerInput(Unit) {
+    awaitEachGesture {
+        awaitFirstDown(requireUnconsumed = false)
+        var prevDist: Float? = null
+        var anchorDist = 0f
+        var anchorFont = 0f
+        var active = false
+        while (true) {
+            val event = awaitPointerEvent()
+            val pressed = event.changes.filter { it.pressed }
+            if (pressed.size < 2) {
+                if (active) {
+                    onEnd()
+                    active = false
                 }
-                val dist = (pressed[0].position - pressed[1].position).getDistance()
-                val prev = prevDist
-                prevDist = dist
-                if (prev != null && prev > 0f && dist > 0f) {
-                    onZoom(dist / prev)
-                }
-                pressed.forEach { it.consume() }
                 if (event.changes.all { !it.pressed }) break
+                prevDist = null
+                continue
+            }
+            val dist = (pressed[0].position - pressed[1].position).getDistance()
+            val prev = prevDist
+            prevDist = dist
+            if (prev == null || prev <= 0f || dist <= 0f) {
+                anchorDist = dist
+                anchorFont = getFont()
+                active = true
+            } else if (anchorDist > 0f) {
+                onZoom((anchorFont * dist / anchorDist).coerceIn(12f, 24f))
+                active = true
+            }
+            pressed.forEach { it.consume() }
+            if (event.changes.all { !it.pressed }) {
+                onEnd()
+                break
             }
         }
     }
+}
 
 /**
  * 4 columns x 5 rows = 20 buttons:

@@ -262,6 +262,24 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Pinch-zoom preview: live font change with no persistence, logging, or
+     * tape rewrite — cheap enough for every gesture frame. [commitSettings]
+     * persists once when the fingers lift.
+     */
+    fun previewTapeFont(sp: Float) {
+        val clamped = sp.coerceIn(12f, 24f)
+        if (clamped != _state.value.settings.tapeFontSp) {
+            _state.update { it.copy(settings = it.settings.copy(tapeFontSp = clamped)) }
+        }
+    }
+
+    fun commitSettings() {
+        val s = _state.value.settings
+        settingsStore.save(s)
+        NcalLogger.i("Tape", "settings committed tapeFont=${s.tapeFontSp}")
+    }
+
     // ---- editing ----
 
     fun onTapeChange(v: TextFieldValue) {
