@@ -173,19 +173,29 @@ object TapeEvaluator {
                         lineValues.add(Triple(index, null, msg))
                         continue
                     }
-                    // A `%` behind `*`/`/`/`^` is a fraction of the running
-                    // subtotal used as the factor: `* 19%` means ×0.19, so
-                    // `+ 100 * 19%` is 19 (not 1900) and `^ 50%` is sqrt.
-                    // (The per-line value still records the resolved amount,
-                    // CalcTape-style: `→ 19.00`.)
-                    val rhs = if (e.isPercent) {
-                        val resolved = percentOf(base.add(sum, MC).add(cur, MC), e.amount)
-                        lineValues.add(Triple(index, resolved, null))
-                        resolved.divide(BigDecimal(100), MC)
-                    } else {
-                        lineValues.add(Triple(index, e.amount, null))
-                        e.amount
+                    // A `%` behind `*`/`/`/`^` is a pure fraction of 1, NOT
+                    // resolved against the running subtotal: `* 19%` means
+                    // ×0.19 (so `+ 100 * 19%` is 19, not 1900) and `^ 50%`
+                    // means ^0.5 (square root). This matches the block-leading
+                    // path, which always used the pure fraction.
+                    if (e.isPercent) {
+                        val factor = e.amount.divide(BigDecimal(100), MC)
+                        if (e.op == '/' && factor.compareTo(BigDecimal.ZERO) == 0) {
+                            val msg = "$tag: division by zero"
+                            errs.add(msg)
+                            lineValues.add(Triple(index, null, msg))
+                            continue
+                        }
+                        cur = when (e.op) {
+                            '*' -> cur.multiply(factor, MC)
+                            '/' -> cur.divide(factor, MC)
+                            else -> pow(cur, factor, tag, errs)
+                        }
+                        lineValues.add(Triple(index, cur, null))
+                        continue
                     }
+                    val rhs = e.amount
+                    lineValues.add(Triple(index, rhs, null))
                     cur = when (e.op) {
                         '*' -> cur.multiply(rhs, MC)
                         '/' -> {
