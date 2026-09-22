@@ -509,7 +509,7 @@ private fun Modifier.pinchZoom(
                 anchorFont = getFont()
                 active = true
             } else if (anchorDist > 0f) {
-                onZoom((anchorFont * dist / anchorDist).coerceIn(12f, 24f))
+                onZoom((anchorFont * dist / anchorDist).coerceIn(6f, 32f))
                 active = true
             }
             pressed.forEach { it.consume() }

@@ -96,7 +96,7 @@ fun SettingsScreen(
                 Slider(
                     value = settings.tapeFontSp,
                     onValueChange = { onUpdate(settings.copy(tapeFontSp = it)) },
-                    valueRange = 12f..24f,
+                    valueRange = 6f..32f,
                 )
             }
             item { Section("Keypad font size (${settings.keyFontSp.toInt()}sp)") }

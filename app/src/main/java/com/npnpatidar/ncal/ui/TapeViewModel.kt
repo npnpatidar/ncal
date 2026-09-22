@@ -268,7 +268,7 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
      * persists once when the fingers lift.
      */
     fun previewTapeFont(sp: Float) {
-        val clamped = sp.coerceIn(12f, 24f)
+        val clamped = sp.coerceIn(6f, 32f)
         if (clamped != _state.value.settings.tapeFontSp) {
             _state.update { it.copy(settings = it.settings.copy(tapeFontSp = clamped)) }
         }

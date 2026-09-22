@@ -36,7 +36,7 @@ class SettingsStore(private val context: Context) {
             decimals = p.getInt(K_DEC, 5).coerceIn(0, 8),
             indent = p.getInt(K_INDENT, 2).coerceIn(1, 8),
             grouping = enumOf<Grouping>(p, K_GROUP, Grouping.OFF),
-            tapeFontSp = p.getFloat(K_TAPE_FONT, 16f).coerceIn(12f, 24f),
+            tapeFontSp = p.getFloat(K_TAPE_FONT, 16f).coerceIn(6f, 32f),
             keyFontSp = p.getFloat(K_KEY_FONT, 18f).coerceIn(12f, 28f),
             keyHeightPortDp = p.getFloat(K_KEY_H_PORT, 56f).coerceIn(40f, 80f),
             keyHeightLandDp = p.getFloat(K_KEY_H_LAND, 46f).coerceIn(36f, 64f),
