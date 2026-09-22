@@ -19,8 +19,6 @@ data class AppSettings(
     val indent: Int = 2,
     val grouping: Grouping = Grouping.OFF,
     val tapeFontSp: Float = 16f,
-    val showLines: Boolean = true,
-    val lineColorArgb: Int = 0xFF9E9E9E.toInt(),
     val keyFontSp: Float = 18f,
     val keyHeightPortDp: Float = 56f,
     val keyHeightLandDp: Float = 46f,
@@ -39,8 +37,6 @@ class SettingsStore(private val context: Context) {
             indent = p.getInt(K_INDENT, 2).coerceIn(1, 8),
             grouping = enumOf<Grouping>(p, K_GROUP, Grouping.OFF),
             tapeFontSp = p.getFloat(K_TAPE_FONT, 16f).coerceIn(12f, 24f),
-            showLines = p.getBoolean(K_LINES, true),
-            lineColorArgb = p.getInt(K_LINE_COLOR, 0xFF9E9E9E.toInt()),
             keyFontSp = p.getFloat(K_KEY_FONT, 18f).coerceIn(12f, 28f),
             keyHeightPortDp = p.getFloat(K_KEY_H_PORT, 56f).coerceIn(40f, 80f),
             keyHeightLandDp = p.getFloat(K_KEY_H_LAND, 46f).coerceIn(36f, 64f),
@@ -58,8 +54,6 @@ class SettingsStore(private val context: Context) {
                 putInt(K_INDENT, s.indent)
                 putString(K_GROUP, s.grouping.name)
                 putFloat(K_TAPE_FONT, s.tapeFontSp)
-                putBoolean(K_LINES, s.showLines)
-                putInt(K_LINE_COLOR, s.lineColorArgb)
                 putFloat(K_KEY_FONT, s.keyFontSp)
                 putFloat(K_KEY_H_PORT, s.keyHeightPortDp)
                 putFloat(K_KEY_H_LAND, s.keyHeightLandDp)
@@ -91,8 +85,6 @@ class SettingsStore(private val context: Context) {
         private const val K_INDENT = "indent"
         private const val K_GROUP = "grouping"
         private const val K_TAPE_FONT = "tape_font"
-        private const val K_LINES = "show_lines"
-        private const val K_LINE_COLOR = "line_color"
         private const val K_KEY_FONT = "key_font"
         private const val K_KEY_H_PORT = "key_h_port"
         private const val K_KEY_H_LAND = "key_h_land"

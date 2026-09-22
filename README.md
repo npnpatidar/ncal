@@ -52,7 +52,7 @@ app/src/main/java/com/npnpatidar/ncal/
   export/CalcExport.kt     .calc/.txt export, header-optional import
   ui/TapeViewModel.kt      state, keypad ops, memory, undo/redo, import/export
   ui/TapeScreen.kt         notes drawer, tape editor + result strip + keypad, bottom bar
-  ui/SettingsScreen.kt     theme, decimals, indent, grouping, fonts, lines, keys, sound, sort
+  ui/SettingsScreen.kt     theme, decimals, indent, grouping, fonts, key size, haptics, sound, sort
   settings/AppSettings.kt  persisted settings model
 app/src/test/.../TapeEngineTest.kt  21 unit tests (run in CI)
 ```

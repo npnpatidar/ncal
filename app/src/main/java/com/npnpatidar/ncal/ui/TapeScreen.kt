@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -20,11 +19,9 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.Canvas
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DrawerValue
@@ -34,12 +31,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -63,11 +57,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalTextInputService
 import androidx.compose.ui.platform.LocalView
@@ -172,6 +163,7 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                     TextButton(onClick = { importLauncher.launch("*/*") }) {
                         Text("Import .calc / .txt")
                     }
+                    TextButton(onClick = { showSettings = true }) { Text("Settings") }
                     HorizontalDivider()
                     TextButton(onClick = { vm.exportCalc() }) { Text("Save .calc → Download/ncal") }
                     TextButton(onClick = { vm.exportTxt() }) { Text("Save .txt → Download/ncal") }
@@ -211,22 +203,6 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                     )
                 },
                 snackbarHost = { SnackbarHost(snack) },
-                bottomBar = {
-                    NavigationBar {
-                        NavigationBarItem(
-                            selected = false,
-                            onClick = { scope.launch { drawerState.open() } },
-                            icon = { Icon(Icons.Filled.Menu, contentDescription = "Notes") },
-                            label = { Text("Notes") },
-                        )
-                        NavigationBarItem(
-                            selected = false,
-                            onClick = { showSettings = true },
-                            icon = { Icon(Icons.Filled.Settings, contentDescription = "Settings") },
-                            label = { Text("Settings") },
-                        )
-                    }
-                },
             ) { pad ->
                 Column(
                     modifier = Modifier.fillMaxSize().padding(pad).padding(horizontal = 12.dp),
@@ -238,54 +214,28 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                     // system keyboard. All input then comes from the keypad.
                     val systemMode = state.keypadMode == KeypadMode.SYSTEM
                     val st = state.settings
-                    val tapeFontSize = st.tapeFontSp.sp
-                    val tapeLineHeight = (st.tapeFontSp * 1.6f).sp
                     Text(
                         "notepad — op amount comment per line",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    val density = LocalDensity.current
-                    val ruleColor = Color(st.lineColorArgb)
-                    // Rules sit exactly on the gaps between text lines: with an
-                    // explicit lineHeight every line box is lineHeight tall, so
-                    // the boundaries are exact regardless of font metrics.
-                    val ruleTopPx = with(density) { 16.dp.toPx() }
-                    val ruleGapPx = with(density) { tapeLineHeight.toPx() }
-                    val ruleStrokePx = with(density) { 1.dp.toPx() }
-                    Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                        if (st.showLines) {
-                            Canvas(modifier = Modifier.matchParentSize()) {
-                                var y = ruleTopPx + ruleGapPx
-                                while (y < size.height - 4.dp.toPx()) {
-                                    drawLine(ruleColor, Offset(0f, y), Offset(size.width, y), ruleStrokePx)
-                                    y += ruleGapPx
-                                }
-                            }
-                        }
-                        val tapeField: @Composable () -> Unit = {
-                            OutlinedTextField(
-                                value = state.tapeText,
-                                onValueChange = vm::onTapeChange,
-                                modifier = Modifier.fillMaxWidth().fillMaxHeight().focusRequester(tapeFocus),
-                                readOnly = !systemMode,
-                                textStyle = MaterialTheme.typography.bodyLarge.copy(
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = tapeFontSize,
-                                    lineHeight = tapeLineHeight,
-                                ),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedContainerColor = Color.Transparent,
-                                    unfocusedContainerColor = Color.Transparent,
-                                ),
-                            )
-                        }
-                        if (systemMode) {
+                    val tapeField: @Composable () -> Unit = {
+                        OutlinedTextField(
+                            value = state.tapeText,
+                            onValueChange = vm::onTapeChange,
+                            modifier = Modifier.fillMaxWidth().weight(1f).focusRequester(tapeFocus),
+                            readOnly = !systemMode,
+                            textStyle = MaterialTheme.typography.bodyLarge.copy(
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = st.tapeFontSp.sp,
+                            ),
+                        )
+                    }
+                    if (systemMode) {
+                        tapeField()
+                    } else {
+                        CompositionLocalProvider(LocalTextInputService provides null) {
                             tapeField()
-                        } else {
-                            CompositionLocalProvider(LocalTextInputService provides null) {
-                                tapeField()
-                            }
                         }
                     }
 
