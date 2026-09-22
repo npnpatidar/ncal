@@ -579,6 +579,253 @@ VARINFO=
         assertAmount("0", eval.grandTotal)
     }
 
+    // ---------- header handling ----------
+
+    @Test
+    fun headerMissingCloseTreatedAsBody() {
+        // No closing tag: the header-looking line is just a comment.
+        val doc = CalcFile.parse("<SFRCalculatorHeader>\n + 5\n")
+        assertTrue(doc.warnings.isEmpty())
+        assertAmount("5", TapeEvaluator.evaluate(doc.lines, 2).grandTotal)
+    }
+
+    @Test
+    fun headerBadDecimalsDefaults5() {
+        val text = "<SFRCalculatorHeader>\nDECIMALS=abc\n</SFRCalculatorHeader>\n + 1\n"
+        assertEquals(5, CalcFile.parse(text).meta.decimals)
+    }
+
+    @Test
+    fun headerUnknownKeysIgnored() {
+        val text = "<SFRCalculatorHeader>\nFOO=bar\nDECIMALS=2\n</SFRCalculatorHeader>\n + 2\n"
+        val doc = CalcFile.parse(text)
+        assertEquals(2, doc.meta.decimals)
+        assertAmount("2", TapeEvaluator.evaluate(doc.lines, 2).grandTotal)
+    }
+
+    @Test
+    fun headerCaretValuesKept() {
+        val text = "<SFRCalculatorHeader>\nCARETLINE=7\nCARETLINEOFFSET=3\n</SFRCalculatorHeader>\n"
+        val meta = CalcFile.parse(text).meta
+        assertEquals(7, meta.caretLine)
+        assertEquals(3, meta.caretOffset)
+    }
+
+    @Test
+    fun crlfHandled() {
+        val eval = TapeEvaluator.evaluate(CalcFile.parse("+ 5\r\n+ 6\r\n").lines, 2)
+        assertAmount("11", eval.grandTotal)
+    }
+
+    // ---------- writer ----------
+
+    @Test
+    fun headerOrderExact() {
+        val m = CalcMeta(decimals = 5, decSep = '.', thouSep = ',', uuid = "U", caretLine = 3, caretOffset = 4)
+        val out = CalcFile.write(TapeDoc(m, emptyList()), emptyList())
+        assertEquals(
+            listOf(
+                "<SFRCalculatorHeader>", "CARETLINE=3", "CARETLINEOFFSET=4", "CFGVER=1",
+                "DECIMALS=5", "DECSEP=.", "EXTSYN=0", "THOUSEP=,", "TXTMODE=0",
+                "TXTSTYLE=0", "UUID=U", "VARINFO=", "</SFRCalculatorHeader>",
+            ),
+            out.split("\n").take(13),
+        )
+    }
+
+    @Test
+    fun balanceFallbackUsesStored() {
+        // Fewer evaluated subtotals than balance lines: stored value kept.
+        val doc = TapeDoc(
+            CalcMeta(decimals = 5),
+            listOf(
+                TapeLine.Entry('+', BigDecimal("5"), false, ""),
+                TapeLine.Separator,
+                TapeLine.Balance(BigDecimal("9"), ""),
+            ),
+        )
+        assertTrue(CalcFile.write(doc, emptyList()).contains("9.00000"))
+    }
+
+    @Test
+    fun blankMiddlePreserved() {
+        val out = CalcFile.write(CalcFile.parse(" + 5\n\n + 7\n").copy(), listOf())
+        assertTrue(out.split("\n").contains(""))
+    }
+
+    @Test
+    fun germanMetaRoundTrip() {
+        val m = CalcMeta(decimals = 2, decSep = ',', thouSep = '.', uuid = "G")
+        val out = CalcFile.write(
+            TapeDoc(m, listOf(TapeLine.Entry('+', BigDecimal("1234.56"), false, ""))),
+            emptyList(),
+        )
+        assertTrue(out.contains("1234,56"))
+        val back = CalcFile.parse(out)
+        assertEquals(',', back.meta.decSep)
+        assertAmount("1234.56", TapeEvaluator.evaluate(back.lines, 2).grandTotal)
+    }
+
+    // ---------- evaluator math ----------
+
+    @Test
+    fun divChainTriple() {
+        assertAmount("5", TapeEvaluator.evaluate(CalcFile.parse(" + 100\n / 4\n / 5\n").lines, 2).grandTotal)
+    }
+
+    @Test
+    fun multChainTriple() {
+        assertAmount("60", TapeEvaluator.evaluate(CalcFile.parse(" + 10\n * 2\n * 3\n").lines, 2).grandTotal)
+    }
+
+    @Test
+    fun longPrecedenceChain() {
+        // 1 + (2*3) + (4*5) = 27: mults bind across lines.
+        assertAmount("27", TapeEvaluator.evaluate(CalcFile.parse(" + 1\n + 2\n * 3\n + 4\n * 5\n").lines, 2).grandTotal)
+    }
+
+    @Test
+    fun zeroBasePercent() {
+        assertAmount("0", TapeEvaluator.evaluate(CalcFile.parse(" + 0\n + 10%\n").lines, 2).grandTotal)
+    }
+
+    @Test
+    fun hundredPercent() {
+        assertAmount("200", TapeEvaluator.evaluate(CalcFile.parse(" + 100\n + 100%\n").lines, 2).grandTotal)
+    }
+
+    @Test
+    fun negativePercentAmount() {
+        // "+ -10%" deducts 10%: 100 - 10 = 90.
+        assertAmount("90", TapeEvaluator.evaluate(CalcFile.parse(" + 100\n + -10%\n").lines, 2).grandTotal)
+    }
+
+    @Test
+    fun divByZeroKeepsChain() {
+        // Error recorded, chain value kept: 10 + 5 = 15.
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 10\n / 0\n + 5\n").lines, 2)
+        assertTrue(eval.errors.any { it.contains("division by zero") })
+        assertAmount("15", eval.grandTotal)
+    }
+
+    @Test
+    fun multipleErrorsAccumulate() {
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 10\n / 0\n ^ 100000\n").lines, 2)
+        assertEquals(2, eval.errors.size)
+        assertAmount("10", eval.grandTotal)
+    }
+
+    @Test
+    fun openTotalVsGrand() {
+        // openTotal = current section (7); grand sums sections (12).
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 5\n\n + 7").lines, 2)
+        assertAmount("7", eval.openTotal)
+        assertAmount("12", eval.grandTotal)
+    }
+
+    @Test
+    fun balanceTotalsMap() {
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 5\n------------------\n + 5\n").lines, 2)
+        assertEquals(0, BigDecimal("5").compareTo(eval.balanceTotals[2]))
+    }
+
+    @Test
+    fun percentAfterSeparatorUsesRunning() {
+        // `+ 10%` after a 100 subtotal adds 10 → 110.
+        assertAmount("110", TapeEvaluator.evaluate(CalcFile.parse(" + 100\n------------------\n + 10%\n").lines, 2).grandTotal)
+    }
+
+    // ---------- tokenizer misc ----------
+
+    @Test
+    fun tabAfterOp() {
+        assertAmount("5", TapeEvaluator.evaluate(CalcFile.parse("+ \t5\n").lines, 2).grandTotal)
+    }
+
+    @Test
+    fun headingLeadingSpaces() {
+        val doc = CalcFile.parse("  # Title\n")
+        val h = doc.lines.first() as TapeLine.Heading
+        assertEquals("Title", h.text)
+    }
+
+    @Test
+    fun hashAloneIsHeading() {
+        assertTrue(CalcFile.parse("#\n").lines.first() is TapeLine.Heading)
+    }
+
+    @Test
+    fun whitespaceOnlyLineIsComment() {
+        // Not empty (has spaces) so not Blank — but harmless either way.
+        assertTrue(CalcFile.parse("   \n + 5\n").lines.first() is TapeLine.Comment)
+    }
+
+    @Test
+    fun noTrailingNewline() {
+        assertAmount("5", TapeEvaluator.evaluate(CalcFile.parse(" + 5").lines, 2).grandTotal)
+    }
+
+    @Test
+    fun badNumberWarns() {
+        assertTrue(CalcFile.parse("+ 10.5.2\n").warnings.any { it.contains("bad number") })
+    }
+
+    @Test
+    fun endashMinus() {
+        assertAmount("-5", TapeEvaluator.evaluate(CalcFile.parse("– 5\n").lines, 2).grandTotal)
+    }
+
+    @Test
+    fun trailingCurrencyKept() {
+        val doc = CalcFile.parse("+ 100₹\n")
+        val entry = doc.lines.filterIsInstance<TapeLine.Entry>().single()
+        assertAmount("100", entry.amount)
+        assertEquals("₹", entry.comment)
+    }
+
+    // ---------- formatter ----------
+
+    @Test
+    fun prettyIdempotent() {
+        val once = TapeFormatter.pretty(LEDGER, 5)
+        assertEquals(once, TapeFormatter.pretty(once, 5))
+    }
+
+    @Test
+    fun prettyEmpty() {
+        assertEquals("\n", TapeFormatter.pretty("", 2))
+    }
+
+    @Test
+    fun prettyOnlySeparator() {
+        assertEquals(" ------------------ \n", TapeFormatter.pretty("------------------", 2))
+    }
+
+    @Test
+    fun prettyMixedPassthrough() {
+        assertEquals(
+            "# T\nhello\n\n+ 1.00\n",
+            TapeFormatter.pretty("# T\nhello\n\n+ 1\n", 2),
+        )
+    }
+
+    @Test
+    fun displayPartsDoubleNegation() {
+        assertEquals(Pair('+', BigDecimal("5")), TapeFormatter.displayParts('-', BigDecimal("-5")))
+    }
+
+    @Test
+    fun displayPartsStarUntouched() {
+        assertEquals(Pair('*', BigDecimal("-2")), TapeFormatter.displayParts('*', BigDecimal("-2")))
+    }
+
+    @Test
+    fun groupNumberNoDecimal() {
+        assertEquals("1,234,567", TapeFormatter.groupNumber("1234567", Grouping.COMMA))
+        assertEquals("12,34,567", TapeFormatter.groupNumber("1234567", Grouping.INDIAN))
+    }
+}
+
     @Test
     fun commaDecimalReadsAsDecimal() {
         // "3,50" is three-fifty, not 350 (was 350 before the fix).
