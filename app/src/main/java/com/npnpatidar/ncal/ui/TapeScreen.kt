@@ -215,6 +215,8 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                     onBack = { showSettings = false },
                 )
             } else {
+            val systemMode = state.keypadMode == KeypadMode.SYSTEM
+            val st = state.settings
             Scaffold(
                 topBar = {
                     TopAppBar(
@@ -236,19 +238,18 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                     )
                 },
                 snackbarHost = { SnackbarHost(snack) },
+                bottomBar = {
+                    BottomPinnedControls(vm = vm, state = state)
+                },
             ) { pad ->
-                // imePadding pins the strip/keypad above the system keyboard;
-                // paired with adjustPan (manifest) there is no double shift.
                 Column(
-                    modifier = Modifier.fillMaxSize().padding(pad).padding(horizontal = 12.dp).imePadding(),
+                    modifier = Modifier.fillMaxSize().padding(pad).padding(horizontal = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     // Notepad (editable area). Outside SYSTEM mode the field is
                     // read-only AND detached from the input service, so tapping
                     // it only moves the cursor — only ABC ever raises the
                     // system keyboard. All input then comes from the keypad.
-                    val systemMode = state.keypadMode == KeypadMode.SYSTEM
-                    val st = state.settings
                     Text(
                         "notepad — op amount comment per line",
                         style = MaterialTheme.typography.bodySmall,
@@ -280,64 +281,6 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                             color = MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.bodySmall,
                         )
-                    }
-
-                    // Middle strip: pinned above the keyboard area so it stays
-                    // visible no matter the keyboard height; exactly one of
-                    // calculator keypad / normal keyboard / hidden is active.
-                    HorizontalDivider()
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        OutlinedButton(
-                            onClick = { vm.setKeypadMode(KeypadMode.CALC) },
-                            enabled = state.keypadMode != KeypadMode.CALC,
-                        ) { Text("Calc") }
-                        OutlinedButton(
-                            onClick = { vm.setKeypadMode(KeypadMode.SYSTEM) },
-                            enabled = state.keypadMode != KeypadMode.SYSTEM,
-                        ) { Text("ABC") }
-                        OutlinedButton(
-                            onClick = { vm.setKeypadMode(KeypadMode.HIDDEN) },
-                            enabled = state.keypadMode != KeypadMode.HIDDEN,
-                        ) { Text("Hide") }
-                        Text(
-                            state.totalText,
-                            style = MaterialTheme.typography.headlineSmall,
-                            textAlign = TextAlign.End,
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
-
-                    val landscape = LocalConfiguration.current.orientation ==
-                        android.content.res.Configuration.ORIENTATION_LANDSCAPE
-                    val keyFont: TextUnit = st.keyFontSp.sp
-                    val keyConfigured: Dp =
-                        (if (landscape) st.keyHeightLandDp else st.keyHeightPortDp).dp
-                    // The keypad fits the space it gets: keys shrink to the
-                    // available height (capped so the tape keeps room) and
-                    // never scroll.
-                    if (state.keypadMode == KeypadMode.CALC) {
-                        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                            val cap = maxHeight * 0.6f
-                            val rows = 5
-                            val gap = 6.dp
-                            val fitted = ((cap - gap * (rows - 1)) / rows).coerceAtLeast(32.dp)
-                            KeypadGrid(
-                                onDigit = vm::key,
-                                onOp = vm::key,
-                                onEquals = vm::equals,
-                                onClear = vm::clear,
-                                onUndo = vm::undo,
-                                onBackspace = vm::backspace,
-                                keyFontSp = keyFont,
-                                keyHeight = minOf(keyConfigured, fitted),
-                                hapticsOn = state.settings.haptics,
-                                soundOn = state.settings.keySound,
-                            )
-                        }
                     }
                 }
             }
@@ -435,6 +378,72 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                     TextButton(onClick = { pendingDelete = null }) { Text("Keep") }
                 },
             )
+        }
+    }
+}
+
+/**
+ * Strip + calculator keypad pinned to the bottom of the screen. Sitting in
+ * Scaffold's bottomBar with imePadding, it stays visible and rides exactly
+ * above the system keyboard (adjustPan in the manifest avoids double shift).
+ */
+@Composable
+private fun BottomPinnedControls(vm: TapeViewModel, state: TapeUiState) {
+    val st = state.settings
+    Column(modifier = Modifier.fillMaxWidth().imePadding()) {
+        HorizontalDivider()
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedButton(
+                onClick = { vm.setKeypadMode(KeypadMode.CALC) },
+                enabled = state.keypadMode != KeypadMode.CALC,
+            ) { Text("Calc") }
+            OutlinedButton(
+                onClick = { vm.setKeypadMode(KeypadMode.SYSTEM) },
+                enabled = state.keypadMode != KeypadMode.SYSTEM,
+            ) { Text("ABC") }
+            OutlinedButton(
+                onClick = { vm.setKeypadMode(KeypadMode.HIDDEN) },
+                enabled = state.keypadMode != KeypadMode.HIDDEN,
+            ) { Text("Hide") }
+            Text(
+                state.totalText,
+                style = MaterialTheme.typography.headlineSmall,
+                textAlign = TextAlign.End,
+                modifier = Modifier.weight(1f),
+            )
+        }
+
+        val landscape = LocalConfiguration.current.orientation ==
+            android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val keyFont: TextUnit = st.keyFontSp.sp
+        val keyConfigured: Dp =
+            (if (landscape) st.keyHeightLandDp else st.keyHeightPortDp).dp
+        // The keypad fits the space it gets: keys shrink to the
+        // available height (capped so the tape keeps room) and
+        // never scroll.
+        if (state.keypadMode == KeypadMode.CALC) {
+            BoxWithConstraints(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+                val cap = maxHeight * 0.6f
+                val rows = 5
+                val gap = 6.dp
+                val fitted = ((cap - gap * (rows - 1)) / rows).coerceAtLeast(32.dp)
+                KeypadGrid(
+                    onDigit = vm::key,
+                    onOp = vm::key,
+                    onEquals = vm::equals,
+                    onClear = vm::clear,
+                    onUndo = vm::undo,
+                    onBackspace = vm::backspace,
+                    keyFontSp = keyFont,
+                    keyHeight = minOf(keyConfigured, fitted),
+                    hapticsOn = state.settings.haptics,
+                    soundOn = state.settings.keySound,
+                )
+            }
         }
     }
 }
