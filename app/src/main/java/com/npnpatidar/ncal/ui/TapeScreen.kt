@@ -567,7 +567,7 @@ private fun BottomPinnedControls(vm: TapeViewModel, state: TapeUiState) {
                     if (state.keypadMode == KeypadMode.CALC) {
                         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
                             val cap = maxHeight * 0.6f
-                            val rows = if (landscape) 4 else 5
+                            val rows = if (landscape) 2 else 5
                             val gap = 6.dp
                             val fitted = ((cap - gap * (rows - 1)) / rows).coerceAtLeast(20.dp)
                             KeypadGrid(
@@ -681,7 +681,8 @@ private fun KeypadGrid(
     // Triple: display label, optional vector icon, action. Display uses
     // glyphs (undo arrow, backspace) and x ÷ - symbols; inserted text stays ASCII.
     // Portrait is 4 columns x 5 rows; landscape spreads the same 20 keys over
-    // 5 columns x 4 rows so the keyboard stays short and the note keeps room.
+    // 10 columns x 2 rows (digits on top, functions below) so the keyboard
+    // stays short and the note keeps the room.
     val portraitKeys: List<KeyDef> = listOf(
         KeyDef(action = onClear, label = "AC"),
         KeyDef(action = onUndo, label = "↩"),
@@ -705,30 +706,30 @@ private fun KeypadGrid(
         KeyDef(action = onEquals, label = "="),
     )
     val landscapeKeys: List<KeyDef> = listOf(
-        KeyDef(action = { onDigit("7") }, label = "7"),
-        KeyDef(action = { onDigit("8") }, label = "8"),
-        KeyDef(action = { onDigit("9") }, label = "9"),
-        KeyDef(action = { onOp("\n / ") }, label = "÷"),
-        KeyDef(action = { onOp("% ") }, label = "%"),
-        KeyDef(action = { onDigit("4") }, label = "4"),
-        KeyDef(action = { onDigit("5") }, label = "5"),
-        KeyDef(action = { onDigit("6") }, label = "6"),
-        KeyDef(action = { onOp("\n * ") }, label = "×"),
-        KeyDef(action = { onOp("\n + ") }, label = "+"),
         KeyDef(action = { onDigit("1") }, label = "1"),
         KeyDef(action = { onDigit("2") }, label = "2"),
         KeyDef(action = { onDigit("3") }, label = "3"),
-        KeyDef(action = { onOp("\n - ") }, label = "−"),
-        KeyDef(action = onEquals, label = "="),
+        KeyDef(action = { onDigit("4") }, label = "4"),
+        KeyDef(action = { onDigit("5") }, label = "5"),
+        KeyDef(action = { onDigit("6") }, label = "6"),
+        KeyDef(action = { onDigit("7") }, label = "7"),
+        KeyDef(action = { onDigit("8") }, label = "8"),
+        KeyDef(action = { onDigit("9") }, label = "9"),
         KeyDef(action = { onDigit("0") }, label = "0"),
         KeyDef(action = { onDigit(".") }, label = "."),
+        KeyDef(action = { onOp("% ") }, label = "%"),
+        KeyDef(action = { onOp("\n + ") }, label = "+"),
+        KeyDef(action = { onOp("\n - ") }, label = "−"),
+        KeyDef(action = { onOp("\n * ") }, label = "×"),
+        KeyDef(action = { onOp("\n / ") }, label = "÷"),
+        KeyDef(action = onEquals, label = "="),
         KeyDef(action = onClear, label = "AC"),
         KeyDef(action = onUndo, label = "↩"),
         KeyDef(action = onBackspace, label = "⌫"),
     )
     val keys = if (landscape) landscapeKeys else portraitKeys
     LazyVerticalGrid(
-        columns = GridCells.Fixed(if (landscape) 5 else 4),
+        columns = GridCells.Fixed(if (landscape) 10 else 4),
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
