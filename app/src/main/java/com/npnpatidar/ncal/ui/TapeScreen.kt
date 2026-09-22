@@ -3,7 +3,10 @@ package com.npnpatidar.ncal.ui
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.border
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -29,6 +32,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Menu
@@ -70,8 +74,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
@@ -79,6 +89,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalTextInputService
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
@@ -275,12 +286,19 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    // Notepad. The cursor is drawn by hand (solid, always on —
+                    // no blink cycle to miss) at the key/finger-driven offset.
+                    // Tapping moves it freely; only ABC raises the keyboard.
                     val latestFont by rememberUpdatedState(st.tapeFontSp)
+                    val cursorColor = MaterialTheme.colorScheme.primary
+                    var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
+                    var fieldFocused by remember { mutableStateOf(false) }
                     val tapeField: @Composable () -> Unit = {
-                        OutlinedTextField(
+                        BasicTextField(
                             value = TextFieldValue(state.tapeText, state.tapeSel),
                             onValueChange = vm::onTapeChange,
                             modifier = Modifier.fillMaxWidth().weight(1f).focusRequester(tapeFocus)
+                                .onFocusChanged { fieldFocused = it.isFocused }
                                 .pinchZoom(
                                     getFont = { latestFont },
                                     onZoom = { vm.previewTapeFont(it) },
@@ -290,9 +308,43 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                             textStyle = MaterialTheme.typography.bodyLarge.copy(
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = st.tapeFontSp.sp,
+                                color = MaterialTheme.colorScheme.onSurface,
                             ),
                             keyboardOptions = if (systemMode) KeyboardOptions.Default
                             else KeyboardOptions(showKeyboardOnFocus = false),
+                            cursorBrush = SolidColor(Color.Transparent),
+                            onTextLayout = { textLayout = it },
+                            decorationBox = { inner ->
+                                Box(
+                                    modifier = Modifier
+                                        .border(
+                                            if (fieldFocused) 2.dp else 1.dp,
+                                            if (fieldFocused) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.outline,
+                                            RoundedCornerShape(4.dp),
+                                        )
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .padding(16.dp, 12.dp),
+                                ) {
+                                    inner()
+                                    val caret = state.tapeSel.end.coerceIn(0, state.tapeText.length)
+                                    val rect = try {
+                                        textLayout?.getCursorRect(caret)
+                                    } catch (_: Throwable) {
+                                        null
+                                    }
+                                    if (rect != null) {
+                                        Canvas(modifier = Modifier.matchParentSize()) {
+                                            val w = maxOf(rect.width, 2.dp.toPx())
+                                            drawRect(
+                                                color = cursorColor,
+                                                topLeft = Offset(rect.left, rect.top),
+                                                size = Size(w, rect.height),
+                                            )
+                                        }
+                                    }
+                                }
+                            },
                         )
                     }
                     if (systemMode) {
