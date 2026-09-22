@@ -200,16 +200,6 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                         Text("Settings")
                     }
                     HorizontalDivider()
-                    TextButton(onClick = { vm.exportCalc() }) {
-                        Icon(Icons.Filled.Share, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Save .calc → Download/ncal")
-                    }
-                    TextButton(onClick = { vm.exportTxt() }) {
-                        Icon(Icons.Filled.Share, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Save .txt → Download/ncal")
-                    }
                     Text(
                         "ncal ${state.appVersion}",
                         style = MaterialTheme.typography.bodySmall,
@@ -324,27 +314,29 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                     val landscape = LocalConfiguration.current.orientation ==
                         android.content.res.Configuration.ORIENTATION_LANDSCAPE
                     val keyFont: TextUnit = st.keyFontSp.sp
-                    val keyHeight: Dp =
+                    val keyConfigured: Dp =
                         (if (landscape) st.keyHeightLandDp else st.keyHeightPortDp).dp
-                    // The keypad never takes more than half the screen: it
-                    // scrolls internally, so the strip above always stays put.
+                    // The keypad fits the space it gets: keys shrink to the
+                    // available height (capped so the tape keeps room) and
+                    // never scroll.
                     if (state.keypadMode == KeypadMode.CALC) {
                         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                            val cap = maxHeight * 0.5f
-                            Box(Modifier.heightIn(max = cap)) {
-                                KeypadGrid(
-                                    onDigit = vm::key,
-                                    onOp = vm::key,
-                                    onEquals = vm::equals,
-                                    onClear = vm::clear,
-                                    onUndo = vm::undo,
-                                    onBackspace = vm::backspace,
-                                    keyFontSp = keyFont,
-                                    keyHeight = keyHeight,
-                                    hapticsOn = state.settings.haptics,
-                                    soundOn = state.settings.keySound,
-                                )
-                            }
+                            val cap = maxHeight * 0.6f
+                            val rows = 5
+                            val gap = 6.dp
+                            val fitted = ((cap - gap * (rows - 1)) / rows).coerceAtLeast(32.dp)
+                            KeypadGrid(
+                                onDigit = vm::key,
+                                onOp = vm::key,
+                                onEquals = vm::equals,
+                                onClear = vm::clear,
+                                onUndo = vm::undo,
+                                onBackspace = vm::backspace,
+                                keyFontSp = keyFont,
+                                keyHeight = minOf(keyConfigured, fitted),
+                                hapticsOn = state.settings.haptics,
+                                soundOn = state.settings.keySound,
+                            )
                         }
                     }
                 }
@@ -515,6 +507,7 @@ private fun KeypadGrid(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
+        userScrollEnabled = false,
     ) {
         items(keys) { key ->
             Button(

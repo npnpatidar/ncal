@@ -201,7 +201,15 @@ object CalcFile {
         } else {
             return null
         }
-        val head = headNumRe.matchAt(rest, 0) ?: return null
+        val head = headNumRe.matchAt(rest, 0)
+        if (head == null) {
+            // Alphabetic text where a number belongs (`+ abc`): keep the row
+            // with a neutral identity amount (0 for +/-, 1 for *//^) and treat
+            // everything — including the non-number — as its comment. Silent.
+            if (rest.trim().isEmpty()) return null
+            val identity = if (op == '*' || op == '/' || op == '^') "1" else "0"
+            return listOf(RawEntry(op, identity, false, rest.trim()))
+        }
         val out = mutableListOf<RawEntry>()
         var curOp = op
         var curNum = head.groupValues[1]

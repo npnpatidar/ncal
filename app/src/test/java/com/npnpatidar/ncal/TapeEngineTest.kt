@@ -208,8 +208,7 @@ VARINFO=
     }
 
     @Test
-    fun loneOperatorLineIsSilent() {
-        // Mid-typing ` + ` must not raise (or log) an error.
+    fun loneOperatorLineIsSilent() {        // Mid-typing ` + ` must not raise (or log) an error.
         val doc = CalcFile.parse(" + \n + 5\n")
         assertTrue(doc.warnings.isEmpty())
         val eval = TapeEvaluator.evaluate(doc.lines, 2)
@@ -373,5 +372,25 @@ VARINFO=
                 CalcFile.parse(" + 5\n ------------------ \n + 5.00 \n + 2\n").lines,
             ),
         )
+    }
+
+    @Test
+    fun textWhereNumberBelongsBecomesComment() {
+        // `+ abc`: the row survives with a neutral 0, everything is comment.
+        val doc = CalcFile.parse(" + abc\n + 5\n")
+        assertTrue(doc.warnings.isEmpty())
+        val eval = TapeEvaluator.evaluate(doc.lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertEquals(BigDecimal("5.00"), eval.grandTotal.setScale(2))
+        val pretty = TapeFormatter.pretty(" + abc\n + 5\n", 2)
+        assertTrue(pretty.contains("abc"))
+    }
+
+    @Test
+    fun multiplicativeTextKeepsIdentity() {
+        // `* xyz` must not nuke the chain: missing factor behaves as ×1.
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 100\n * xyz\n").lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertEquals(BigDecimal("100.00"), eval.grandTotal.setScale(2))
     }
 }
