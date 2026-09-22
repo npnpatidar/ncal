@@ -23,7 +23,7 @@ import kotlinx.coroutines.launch
 import java.math.BigDecimal
 import java.math.RoundingMode
 import androidx.compose.ui.text.input.TextFieldValue
-import androidx.compose.ui.text.input.TextRange
+import androidx.compose.ui.text.TextRange
 
 enum class KeypadMode { CALC, SYSTEM, HIDDEN }
 

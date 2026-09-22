@@ -262,6 +262,29 @@ VARINFO=
     }
 
     @Test
+    fun negativeSubtotalShowsMinusOperand() {
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 5\n - 12\n").lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertEquals(BigDecimal("-7.00"), eval.grandTotal.setScale(2))
+        // Canonical form carries the sign in the operator column, never `+ -7`.
+        assertEquals(" -          7.00000 ", CalcFile.formatEntry('+', BigDecimal("-7"), false, "", meta))
+        // …and it round-trips as a restatement, not fresh input.
+        val tape2 = " + 5\n - 12\n ------------------ \n -          7.00000 \n"
+        val eval2 = TapeEvaluator.evaluate(CalcFile.parse(tape2).lines, 2)
+        assertTrue(eval2.errors.isEmpty())
+        assertEquals(BigDecimal("-7.00"), eval2.grandTotal.setScale(2))
+    }
+
+    @Test
+    fun prettyNegativeBalanceThreeColumns() {
+        assertEquals(
+            "+ 5.00\n- 12.00\n ------------------ \n- 7.00\n",
+            TapeFormatter.pretty(" + 5\n - 12\n ------------------ \n - 7.00\n", 2),
+        )
+    }
+}
+
+    @Test
     fun groupingWesternAndIndian() {
         assertEquals("1,234,567.89", TapeFormatter.groupNumber("1234567.89", Grouping.COMMA))
         assertEquals("123.00", TapeFormatter.groupNumber("123.00", Grouping.COMMA))

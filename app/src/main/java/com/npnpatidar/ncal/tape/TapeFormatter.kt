@@ -34,22 +34,30 @@ object TapeFormatter {
             formatNum(v, decimals, pct, grouping)
         val width = doc.lines.mapNotNull {
             when (it) {
-                is TapeLine.Entry -> num(it.amount, it.isPercent).length
-                is TapeLine.Balance -> num(it.value, false).length
+                is TapeLine.Entry -> {
+                    val (_, abs) = displayParts(it.op, it.amount)
+                    num(abs, it.isPercent).length
+                }
+                is TapeLine.Balance -> {
+                    val (_, abs) = displayParts('+', it.value)
+                    num(abs, false).length
+                }
                 else -> null
             }
         }.maxOrNull()?.coerceAtLeast(1) ?: 0
         val out = doc.lines.map { line ->
             when (line) {
                 is TapeLine.Entry -> {
-                    val n = num(line.amount, line.isPercent).padEnd(width)
-                    if (line.comment.isNotBlank()) "${line.op} $n$gap${line.comment}"
-                    else "${line.op} $n".trimEnd()
+                    val (op, abs) = displayParts(line.op, line.amount)
+                    val n = num(abs, line.isPercent).padEnd(width)
+                    if (line.comment.isNotBlank()) "$op $n$gap${line.comment}"
+                    else "$op $n".trimEnd()
                 }
                 is TapeLine.Balance -> {
-                    val n = num(line.value, false).padEnd(width)
-                    if (line.comment.isNotBlank()) "+ $n$gap${line.comment}"
-                    else "+ $n".trimEnd()
+                    val (op, abs) = displayParts('+', line.value)
+                    val n = num(abs, false).padEnd(width)
+                    if (line.comment.isNotBlank()) "$op $n$gap${line.comment}"
+                    else "$op $n".trimEnd()
                 }
                 is TapeLine.Separator -> CalcFile.SEPARATOR
                 is TapeLine.Blank -> ""
@@ -71,6 +79,18 @@ object TapeFormatter {
     }
 
     /**
+     * Effective display operator + magnitude: a negative `+X` shows as `- X`
+     * (and `-(-X)` as `+ X`), so the operator column carries only `+-*%/`
+     * and the number column stays aligned. Zero (including `-0.00`) stays `+`.
+     */
+    fun displayParts(op: Char, amount: java.math.BigDecimal): Pair<Char, java.math.BigDecimal> {
+        if ((op == '+' || op == '-') && amount.signum() < 0) {
+            return (if (op == '+') '-' else '+') to amount.negate()
+        }
+        return op to amount
+    }
+
+    /**
      * Live refresh: rewrite ONLY balance lines to their recomputed running
      * totals ([EvalResult.balanceTotals]), leaving every entry byte-identical
      * so typing is never disturbed. Returns null when nothing would change.
@@ -89,11 +109,14 @@ object TapeFormatter {
         val gap = " ".repeat(indent.coerceIn(1, 8))
         val width = doc.lines.mapIndexedNotNull { i, line ->
             when (line) {
-                is TapeLine.Entry -> formatNum(line.amount, decimals, line.isPercent, grouping).length
-                is TapeLine.Balance ->
-                    (eval.balanceTotals[i] ?: line.value).let {
-                        formatNum(it, decimals, false, grouping).length
-                    }
+                is TapeLine.Entry -> {
+                    val (_, abs) = displayParts(line.op, line.amount)
+                    formatNum(abs, decimals, line.isPercent, grouping).length
+                }
+                is TapeLine.Balance -> {
+                    val (_, abs) = displayParts('+', eval.balanceTotals[i] ?: line.value)
+                    formatNum(abs, decimals, false, grouping).length
+                }
                 else -> null
             }
         }.maxOrNull()?.coerceAtLeast(1) ?: 0
@@ -102,9 +125,10 @@ object TapeFormatter {
             val line = doc.lines[i]
             if (line is TapeLine.Balance) {
                 val v = eval.balanceTotals[i] ?: line.value
-                val n = formatNum(v, decimals, false, grouping).padEnd(width)
-                val fresh = if (line.comment.isNotBlank()) "+ $n$gap${line.comment}"
-                else "+ $n".trimEnd()
+                val (op, abs) = displayParts('+', v)
+                val n = formatNum(abs, decimals, false, grouping).padEnd(width)
+                val fresh = if (line.comment.isNotBlank()) "$op $n$gap${line.comment}"
+                else "$op $n".trimEnd()
                 if (fresh != raw) changed = true
                 fresh
             } else {

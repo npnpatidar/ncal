@@ -94,13 +94,16 @@ object CalcFile {
             }
         }
 
-        // Post-pass: `+X` directly after a separator is a balance restatement.
-        // The comment (if any) is user content and survives.
+        // Post-pass: `+X`/`-X` directly after a separator is a balance
+        // restatement (kept signed, comment included). The evaluator skips it
+        // when it matches the running total, counts it as fresh input when it
+        // doesn't — either way the display snaps to the running total.
         val fixed = lines.mapIndexed { i, l ->
-            if (l is TapeLine.Entry && l.op == '+' && !l.isPercent &&
+            if (l is TapeLine.Entry && (l.op == '+' || l.op == '-') && !l.isPercent &&
                 i > 0 && lines[i - 1] is TapeLine.Separator
             ) {
-                TapeLine.Balance(l.amount, l.comment)
+                val signed = if (l.op == '-') l.amount.negate() else l.amount
+                TapeLine.Balance(signed, l.comment)
             } else l
         }
         return TapeDoc(meta, fixed, warnMsgs)
@@ -152,12 +155,15 @@ object CalcFile {
         return (header + body).joinToString("\n") + "\n"
     }
 
-    /** ` +         45.00000 hdfc` — 1 space, op, 17-wide amount, space, comment. */
+    /** ` +         45.00000 hdfc` — 1 space, op, 17-wide amount, space, comment.
+     * Negative `+X` renders as `- X` (and `-(-X)` as `+ X`) so the operator
+     * column only ever carries the sign and columns stay aligned. */
     fun formatEntry(op: Char, amount: java.math.BigDecimal, isPercent: Boolean, comment: String, meta: CalcMeta): String {
-        var digits = amount.setScale(meta.decimals, RoundingMode.HALF_UP).toPlainString()
+        val (dop, abs) = TapeFormatter.displayParts(op, amount)
+        var digits = abs.setScale(meta.decimals, RoundingMode.HALF_UP).toPlainString()
         if (meta.decSep != '.') digits = digits.replace('.', meta.decSep)
         if (isPercent) digits += "%"
-        return " " + op + digits.padStart(AMOUNT_WIDTH) + " " + comment.trim()
+        return " " + dop + digits.padStart(AMOUNT_WIDTH) + " " + comment.trim()
     }
 
     private fun normalizeNumber(raw: String, meta: CalcMeta): String {
