@@ -22,11 +22,15 @@ object CalcFile {
 
     private val separatorRe = Regex("""^\s*-{2,}\s?$""")
     private val headingRe = Regex("""^(#+)\s?(.*)$""")
-    // Head number (optional unary sign glued to the digits, e.g. `* -2`)
-    // and inline `op number` splits (matchAt/find: no anchors).
-    private val headNumRe = Regex("""([+-]?\s*[0-9][0-9.,]*)(%?)""")
-    private val splitRe = Regex("""([+\-*/^])\s*([0-9][0-9.,]*)(%?)""")
+    // \p{Nd} = any Unicode decimal digit (Devanagari, Arabic-Indic, …);
+    // values are folded to ASCII in normalizeNumber, comments stay verbatim.
+    private const val NUM_CORE = """(?:\.\p{Nd}+|\p{Nd}[\p{Nd}.,]*)(?:[eE][+-]?[0-9]+)?"""
+    // Head number (optional unary sign, leading-dot and scientific forms) and
+    // inline `op number` splits (matchAt/find: no anchors).
+    private val headNumRe = Regex("([+-]?\\s*$NUM_CORE)(%?)")
+    private val splitRe = Regex("([+\\-*/^])\\s*($NUM_CORE)(%?)")
     private val bareOpRe = Regex("""^\s*[+\-*/^]\s*([+-]\s*)?${'$'}""")
+    private val currencyLeadRe = Regex("""^[$€₹£¥¢₩₽₺₫₪\s]+""")
 
     /** True for an open operator line with no digits yet (` * `, ` *- `). */
     fun isBareOpLine(raw: String): Boolean = bareOpRe.matches(raw)
@@ -175,7 +179,9 @@ object CalcFile {
     }
 
     private fun normalizeNumber(raw: String, meta: CalcMeta): String {
-        val nospace = raw.replace(" ", "")
+        // Arabic decimal/grouping separators first (unambiguous).
+        val arabic = raw.replace("٬", "").replace("٫", ".")
+        val nospace = asciiDigits(arabic).replace(" ", "")
         if (meta.decSep == '.' && meta.thouSep == ',') {
             // Default/US meta, smart comma handling:
             // - "3,50" or German "1.234,56" (comma + trailing digits) use the
@@ -206,6 +212,34 @@ object CalcFile {
 
     private data class RawEntry(val op: Char, val num: String, val pct: Boolean, val comment: String)
 
+    /** Unicode decimal-digit block starts (Devanagari, Bengali, Gurmukhi,
+     * Gujarati, Oriya, Tamil, Telugu, Kannada, Malayalam, Arabic-Indic,
+     * Extended Arabic-Indic, fullwidth) mapped onto ASCII 0-9. */
+    private val DIGIT_BASES = intArrayOf(
+        0x0966, 0x09E6, 0x0A66, 0x0AE6, 0x0B66, 0x0BE6, 0x0C66, 0x0CE6, 0x0D66,
+        0x0660, 0x06F0, 0xFF10,
+    )
+
+    private fun asciiDigits(s: String): String {
+        var asciiOnly = true
+        for (ch in s) {
+            if (ch !in '0'..'9' && ch != '.' && ch != ',' && ch != '%' &&
+                ch != '+' && ch != '-' && ch != ' ' && ch != 'e' && ch != 'E'
+            ) {
+                asciiOnly = false
+                break
+            }
+        }
+        if (asciiOnly) return s
+        val sb = StringBuilder(s.length)
+        for (ch in s) {
+            val code = ch.code
+            val base = DIGIT_BASES.firstOrNull { code in it..it + 9 }
+            sb.append(if (base != null) '0' + (code - base) else ch)
+        }
+        return sb.toString()
+    }
+
     /**
      * Split an entry line on inline `op number` boundaries (CalcTape behavior:
      * an operator behind a number starts the next calculation line, even in the
@@ -215,16 +249,24 @@ object CalcFile {
      */
     private fun tokenizeEntryLine(trimmed: String): List<RawEntry>? {
         if (trimmed.isEmpty()) return null
+        // Lookalike operators from other keyboards/clipboards (× ÷ − –);
+        // em-dash is prose punctuation and stays untouched.
+        var line = trimmed
+            .replace('×', '*').replace('÷', '/').replace('−', '-').replace('–', '-')
+            .replaceFirst(currencyLeadRe, "")
+        if (line.isEmpty()) return null
         var rest: String
         var op: Char
-        val first = trimmed[0]
+        val first = line[0]
         val explicitOp = first == '+' || first == '-' || first == '*' || first == '/' || first == '^'
         if (explicitOp) {
             op = first
-            rest = trimmed.substring(1).trimStart()
-        } else if (first.isDigit()) {
+            // Currency may also hug the number ("+ ₹500").
+            rest = line.substring(1).replaceFirst(currencyLeadRe, "").trimStart()
+        } else if (headNumRe.matchAt(line, 0) != null) {
+            // Bare number, leading-dot and scientific forms included.
             op = '+'
-            rest = trimmed
+            rest = line
         } else {
             return null
         }

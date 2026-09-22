@@ -518,6 +518,88 @@ VARINFO=
     }
 
     @Test
+    fun ambiguousShortCommaReadsDecimal() {
+        // Documented trade-off: "1,00" reads as 1.00 (European decimal),
+        // not 100 (Indian shorthand).
+        val eval = TapeEvaluator.evaluate(CalcFile.parse("1,00\n").lines, 2)
+        assertEquals(BigDecimal("1.00"), eval.grandTotal.setScale(2))
+    }
+
+    @Test
+    fun unicodeOperatorsParse() {
+        // × ÷ − from other keyboards behave like * / -.
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 100\n × 2\n").lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertEquals(BigDecimal("200"), eval.grandTotal.stripTrailingZeros())
+        val eval2 = TapeEvaluator.evaluate(CalcFile.parse(" − 5\n").lines, 2)
+        assertEquals(BigDecimal("-5"), eval2.grandTotal.stripTrailingZeros())
+        val eval3 = TapeEvaluator.evaluate(CalcFile.parse(" + 100\n ÷ 4\n").lines, 2)
+        assertEquals(BigDecimal("25"), eval3.grandTotal.stripTrailingZeros())
+    }
+
+    @Test
+    fun currencySymbolsAreDroppedForMath() {
+        // Symbols don't count; the number does. Symbol itself is not kept.
+        val doc = CalcFile.parse(" + ₹500 lunch\n")
+        assertTrue(doc.warnings.isEmpty())
+        val entry = doc.lines.filterIsInstance<TapeLine.Entry>().single()
+        assertEquals(BigDecimal("500"), entry.amount.stripTrailingZeros())
+        assertEquals("lunch", entry.comment)
+        val bare = TapeEvaluator.evaluate(CalcFile.parse("₹500\n").lines, 2)
+        assertEquals(BigDecimal("500"), bare.grandTotal.stripTrailingZeros())
+    }
+
+    @Test
+    fun devanagariDigitsCompute() {
+        // १२ = 12.
+        val eval = TapeEvaluator.evaluate(CalcFile.parse("१२\n").lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertEquals(BigDecimal("12"), eval.grandTotal.stripTrailingZeros())
+    }
+
+    @Test
+    fun arabicIndicDigitsCompute() {
+        // ١٢٣ = 123.
+        val eval = TapeEvaluator.evaluate(CalcFile.parse("١٢٣\n").lines, 2)
+        assertEquals(BigDecimal("123"), eval.grandTotal.stripTrailingZeros())
+    }
+
+    @Test
+    fun indicDigitsInCommentsStayVerbatim() {
+        // Comment script is preserved byte-identically; only the number folds.
+        val doc = CalcFile.parse(" + 100 meeting १२\n")
+        val entry = doc.lines.filterIsInstance<TapeLine.Entry>().single()
+        assertEquals(BigDecimal("100"), entry.amount.stripTrailingZeros())
+        assertEquals("meeting १२", entry.comment)
+    }
+
+    @Test
+    fun leadingDotDecimal() {
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + .5\n").lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertEquals(BigDecimal("0.5"), eval.grandTotal.stripTrailingZeros())
+        val bare = TapeEvaluator.evaluate(CalcFile.parse(".5 lunch\n").lines, 2)
+        assertEquals(BigDecimal("0.5"), bare.grandTotal.stripTrailingZeros())
+    }
+
+    @Test
+    fun scientificNotation() {
+        val eval = TapeEvaluator.evaluate(CalcFile.parse("1e5\n").lines, 2)
+        assertEquals(0, BigDecimal("100000").compareTo(eval.grandTotal))
+        val eval2 = TapeEvaluator.evaluate(CalcFile.parse(" + 2E+3\n").lines, 2)
+        assertEquals(0, BigDecimal("2000").compareTo(eval2.grandTotal))
+    }
+
+    @Test
+    fun scientificLookalikeStaysComment() {
+        // "5 eggs": the 'e' needs digits after it to count as an exponent.
+        val doc = CalcFile.parse("5 eggs\n")
+        val entry = doc.lines.filterIsInstance<TapeLine.Entry>().single()
+        assertEquals(BigDecimal("5"), entry.amount.stripTrailingZeros())
+        assertEquals("eggs", entry.comment)
+    }
+
+    @Test
     fun spacedSignNumber() {
         // "+ - 2" (sign separated by space) still means -2.
         val eval = TapeEvaluator.evaluate(CalcFile.parse("+ - 2\n").lines, 2)
