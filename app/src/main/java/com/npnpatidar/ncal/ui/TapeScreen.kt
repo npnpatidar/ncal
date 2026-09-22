@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
@@ -78,10 +79,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalTextInputService
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -121,10 +119,14 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
     val tapeFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     // ABC mode: cursor goes straight into the note and the keyboard opens.
+    // CALC mode: cursor follows keys/finger, keyboard never auto-shows.
     LaunchedEffect(state.keypadMode, showSettings) {
-        if (state.keypadMode == KeypadMode.SYSTEM && !showSettings) {
+        if (showSettings) return@LaunchedEffect
+        if (state.keypadMode == KeypadMode.SYSTEM) {
             tapeFocus.requestFocus()
             keyboard?.show()
+        } else if (state.keypadMode == KeypadMode.CALC) {
+            tapeFocus.requestFocus()
         }
     }
 
@@ -274,33 +276,9 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     val latestFont by rememberUpdatedState(st.tapeFontSp)
-                    // Negative amounts render red, subtotals bold — like the
-                    // reference tape. Spans overlay the monospace base style.
-                    val negativeRed = if (dark) Color(0xFFEF9A9A) else Color(0xFFC62828)
-                    val annotated = remember(state.tapeText, state.lineMarks) {
-                        buildAnnotatedString {
-                            append(state.tapeText)
-                            val lines = state.tapeText.split("\n")
-                            var offset = 0
-                            lines.forEachIndexed { i, ln ->
-                                val m = state.lineMarks.getOrNull(i)
-                                if (m != null && (m.bold || m.negative)) {
-                                    addStyle(
-                                        SpanStyle(
-                                            color = if (m.negative) negativeRed else Color.Unspecified,
-                                            fontWeight = if (m.bold) FontWeight.Bold else null,
-                                        ),
-                                        offset,
-                                        (offset + ln.length).coerceAtMost(state.tapeText.length),
-                                    )
-                                }
-                                offset += ln.length + 1
-                            }
-                        }
-                    }
                     val tapeField: @Composable () -> Unit = {
                         OutlinedTextField(
-                            value = TextFieldValue(annotated, state.tapeSel),
+                            value = TextFieldValue(state.tapeText, state.tapeSel),
                             onValueChange = vm::onTapeChange,
                             modifier = Modifier.fillMaxWidth().weight(1f).focusRequester(tapeFocus)
                                 .pinchZoom(
@@ -313,6 +291,8 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = st.tapeFontSp.sp,
                             ),
+                            keyboardOptions = if (systemMode) KeyboardOptions.Default
+                            else KeyboardOptions(showKeyboardOnFocus = false),
                         )
                     }
                     if (systemMode) {
