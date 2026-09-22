@@ -26,9 +26,10 @@ object CalcFile {
     // values are folded to ASCII in normalizeNumber, comments stay verbatim.
     private const val NUM_CORE = """(?:\.\p{Nd}+|\p{Nd}[\p{Nd}.,]*)(?:[eE][+-]?[0-9]+)?"""
     // Head number (optional unary sign, leading-dot and scientific forms) and
-    // inline `op number` splits (matchAt/find: no anchors).
+    // inline `op number` splits (matchAt/find: no anchors). Splits also take
+    // a sign after the operator, so `2^-3` is 0.125 and `5 * -2` is -10.
     private val headNumRe = Regex("([+-]?\\s*$NUM_CORE)(%?)")
-    private val splitRe = Regex("([+\\-*/^])\\s*($NUM_CORE)(%?)")
+    private val splitRe = Regex("([+\\-*/^])\\s*([+-]?\\s*$NUM_CORE)(%?)")
     private val bareOpRe = Regex("""^\s*[+\-*/^]\s*([+-]\s*)?${'$'}""")
     private val currencyLeadRe = Regex("""^[$€₹£¥¢₩₽₺₫₪\s]+""")
 

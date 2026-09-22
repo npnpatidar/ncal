@@ -207,6 +207,30 @@ VARINFO=
     }
 
     @Test
+    fun negativeExponentInline() {
+        // `2^-3` is 0.125 (was silently -1 before the fix).
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 2^-3\n").lines, 3)
+        assertTrue(eval.errors.isEmpty())
+        assertEquals(BigDecimal("0.125"), eval.grandTotal.stripTrailingZeros())
+    }
+
+    @Test
+    fun signedFactorInline() {
+        // `5 * -2` is -10 (was silently +3 before the fix).
+        val eval = TapeEvaluator.evaluate(CalcFile.parse("5 * -2\n").lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertAmount("-10", eval.grandTotal)
+    }
+
+    @Test
+    fun doubleNegativeInline() {
+        // `5 - -3` is 5 - (-3) = 8.
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 5 - -3\n").lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertAmount("8", eval.grandTotal)
+    }
+
+    @Test
     fun textLedDateStaysComment() {
         val doc = CalcFile.parse("trip 2026-09-21\n + 1\n")
         val eval = TapeEvaluator.evaluate(doc.lines, 2)
