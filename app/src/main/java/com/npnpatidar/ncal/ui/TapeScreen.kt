@@ -286,7 +286,7 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                                     onZoom = { vm.previewTapeFont(it) },
                                     onEnd = { vm.commitSettings() },
                                 ),
-                            readOnly = state.keypadMode == KeypadMode.HIDDEN,
+                            readOnly = state.keypadMode != KeypadMode.SYSTEM,
                             textStyle = MaterialTheme.typography.bodyLarge.copy(
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = st.tapeFontSp.sp,
