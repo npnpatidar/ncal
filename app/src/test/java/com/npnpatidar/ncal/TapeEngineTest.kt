@@ -799,7 +799,11 @@ VARINFO=
 
     @Test
     fun prettyOnlySeparator() {
-        assertEquals(" ------------------ \n", TapeFormatter.pretty("------------------", 2))
+        // trimEnd() takes the canonical trailing space; re-parses identically.
+        assertEquals(
+            " ------------------\n",
+            TapeFormatter.pretty("------------------", 2),
+        )
     }
 
     @Test
