@@ -1,9 +1,15 @@
 package com.npnpatidar.ncal.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -12,9 +18,13 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.Canvas
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DrawerValue
@@ -24,9 +34,12 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -47,11 +60,27 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.foundation.isSystemInDarkTheme
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.hapticfeedback.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalTextInputService
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.npnpatidar.ncal.settings.ThemeMode
+import com.npnpatidar.ncal.storage.NotesRepository
 import kotlinx.coroutines.launch
 
 /**
@@ -61,7 +90,7 @@ import kotlinx.coroutines.launch
  * - Middle strip: [calculator keypad] [normal keyboard] [running total].
  * - 4x5 calculator keypad.
  */
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun TapeScreen(vm: TapeViewModel = viewModel()) {
     val state by vm.state.collectAsState()
@@ -70,7 +99,24 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
     val scope = rememberCoroutineScope()
     var renameOpen by remember { mutableStateOf(false) }
     var renameText by remember { mutableStateOf("") }
-    var pendingDelete by remember { mutableStateOf<com.npnpatidar.ncal.storage.NotesRepository.NoteMeta?>(null) }
+    var renameTarget by remember { mutableStateOf<NotesRepository.NoteMeta?>(null) }
+    var pendingDelete by remember { mutableStateOf<NotesRepository.NoteMeta?>(null) }
+    var noteMenu by remember { mutableStateOf<NotesRepository.NoteMeta?>(null) }
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetMultipleContents(),
+    ) { uris ->
+        if (uris.isNotEmpty()) vm.importFiles(uris)
+    }
+    var showSettings by remember { mutableStateOf(false) }
+    val tapeFocus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    // ABC mode: cursor goes straight into the note and the keyboard opens.
+    LaunchedEffect(state.keypadMode, showSettings) {
+        if (state.keypadMode == KeypadMode.SYSTEM && !showSettings) {
+            tapeFocus.requestFocus()
+            keyboard?.show()
+        }
+    }
 
     LaunchedEffect(state.message) {
         state.message?.let {
@@ -79,41 +125,57 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
         }
     }
 
-    MaterialTheme(colorScheme = if (state.darkTheme) darkColorScheme() else lightColorScheme()) {
+    val dark = when (state.settings.themeMode) {
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK -> true
+        ThemeMode.SYSTEM -> isSystemInDarkTheme()
+    }
+    MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
         ModalNavigationDrawer(
             drawerState = drawerState,
             drawerContent = {
                 ModalDrawerSheet {
-                    Text(
-                        "Notes",
-                        style = MaterialTheme.typography.titleLarge,
-                        modifier = Modifier.padding(16.dp),
-                    )
-                    LazyColumn(modifier = Modifier.weight(1f)) {
-                        items(state.notes, key = { it.id }) { note ->
-                            NavigationDrawerItem(
-                                label = { Text(note.name) },
-                                selected = note.id == state.noteId,
-                                onClick = {
-                                    vm.selectNote(note.id)
-                                    scope.launch { drawerState.close() }
-                                },
-                                badge = {
-                                    IconButton(onClick = { pendingDelete = note }) {
-                                        Icon(Icons.Filled.Delete, contentDescription = "Delete note")
-                                    }
-                                },
-                                modifier = Modifier.padding(horizontal = 8.dp),
-                            )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "Notes",
+                            style = MaterialTheme.typography.titleLarge,
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(onClick = { vm.createNote() }) {
+                            Icon(Icons.Filled.Add, contentDescription = "New note")
                         }
                     }
-                    TextButton(onClick = { vm.createNote() }) { Text("+ New note") }
+                    LazyColumn(modifier = Modifier.weight(1f)) {
+                        items(state.notes, key = { it.id }) { note ->
+                            // Long-press a note for rename / duplicate /
+                            // export / delete; tap to open it.
+                            Box(
+                                modifier = Modifier.padding(horizontal = 8.dp)
+                                    .combinedClickable(
+                                        onClick = {
+                                            vm.selectNote(note.id)
+                                            scope.launch { drawerState.close() }
+                                        },
+                                        onLongClick = { noteMenu = note },
+                                    ),
+                            ) {
+                                NavigationDrawerItem(
+                                    label = { Text(note.name) },
+                                    selected = note.id == state.noteId,
+                                    onClick = {},
+                                )
+                            }
+                        }
+                    }
+                    TextButton(onClick = { importLauncher.launch("*/*") }) {
+                        Text("Import .calc / .txt")
+                    }
                     HorizontalDivider()
                     TextButton(onClick = { vm.exportCalc() }) { Text("Save .calc → Download/ncal") }
                     TextButton(onClick = { vm.exportTxt() }) { Text("Save .txt → Download/ncal") }
-                    TextButton(onClick = { vm.toggleTheme() }) {
-                        Text(if (state.darkTheme) "Light theme" else "Dark theme")
-                    }
                     Text(
                         "ncal ${state.appVersion}",
                         style = MaterialTheme.typography.bodySmall,
@@ -122,6 +184,13 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                 }
             },
         ) {
+            if (showSettings) {
+                SettingsScreen(
+                    settings = state.settings,
+                    onUpdate = vm::updateSettings,
+                    onBack = { showSettings = false },
+                )
+            } else {
             Scaffold(
                 topBar = {
                     TopAppBar(
@@ -129,6 +198,7 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                             Text(
                                 state.noteName.ifBlank { "ncal" },
                                 modifier = Modifier.clickable {
+                                    renameTarget = state.notes.firstOrNull { it.id == state.noteId }
                                     renameText = state.noteName
                                     renameOpen = true
                                 },
@@ -142,6 +212,22 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                     )
                 },
                 snackbarHost = { SnackbarHost(snack) },
+                bottomBar = {
+                    NavigationBar {
+                        NavigationBarItem(
+                            selected = false,
+                            onClick = { scope.launch { drawerState.open() } },
+                            icon = { Icon(Icons.Filled.Menu, contentDescription = "Notes") },
+                            label = { Text("Notes") },
+                        )
+                        NavigationBarItem(
+                            selected = false,
+                            onClick = { showSettings = true },
+                            icon = { Icon(Icons.Filled.Settings, contentDescription = "Settings") },
+                            label = { Text("Settings") },
+                        )
+                    }
+                },
             ) { pad ->
                 Column(
                     modifier = Modifier.fillMaxSize().padding(pad).padding(horizontal = 12.dp),
@@ -152,23 +238,55 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                     // it only moves the cursor — only ABC ever raises the
                     // system keyboard. All input then comes from the keypad.
                     val systemMode = state.keypadMode == KeypadMode.SYSTEM
-                    val tapeField: @Composable () -> Unit = {
-                        OutlinedTextField(
-                            value = state.tapeText,
-                            onValueChange = vm::onTapeChange,
-                            modifier = Modifier.fillMaxWidth().weight(1f),
-                            readOnly = !systemMode,
-                            textStyle = MaterialTheme.typography.bodyLarge.copy(
-                                fontFamily = FontFamily.Monospace,
-                            ),
-                            label = { Text("notepad — op amount comment per line") },
-                        )
-                    }
-                    if (systemMode) {
-                        tapeField()
-                    } else {
-                        CompositionLocalProvider(LocalTextInputService provides null) {
+                    val st = state.settings
+                    val tapeFontSize = st.tapeFontSp.sp
+                    val tapeLineHeight = (st.tapeFontSp * 1.6f).sp
+                    Text(
+                        "notepad — op amount comment per line",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    val density = LocalDensity.current
+                    val ruleColor = Color(st.lineColorArgb)
+                    // Rules sit exactly on the gaps between text lines: with an
+                    // explicit lineHeight every line box is lineHeight tall, so
+                    // the boundaries are exact regardless of font metrics.
+                    val ruleTopPx = with(density) { 16.dp.toPx() }
+                    val ruleGapPx = with(density) { tapeLineHeight.toPx() }
+                    val ruleStrokePx = with(density) { 1.dp.toPx() }
+                    Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                        if (st.showLines) {
+                            Canvas(modifier = Modifier.matchParentSize()) {
+                                var y = ruleTopPx + ruleGapPx
+                                while (y < size.height - 4.dp.toPx()) {
+                                    drawLine(ruleColor, Offset(0f, y), Offset(size.width, y), ruleStrokePx)
+                                    y += ruleGapPx
+                                }
+                            }
+                        }
+                        val tapeField: @Composable () -> Unit = {
+                            OutlinedTextField(
+                                value = state.tapeText,
+                                onValueChange = vm::onTapeChange,
+                                modifier = Modifier.fillMaxWidth().fillMaxHeight().focusRequester(tapeFocus),
+                                readOnly = !systemMode,
+                                textStyle = MaterialTheme.typography.bodyLarge.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = tapeFontSize,
+                                    lineHeight = tapeLineHeight,
+                                ),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedContainerColor = Color.Transparent,
+                                    unfocusedContainerColor = Color.Transparent,
+                                ),
+                            )
+                        }
+                        if (systemMode) {
                             tapeField()
+                        } else {
+                            CompositionLocalProvider(LocalTextInputService provides null) {
+                                tapeField()
+                            }
                         }
                     }
 
@@ -207,6 +325,11 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                         )
                     }
 
+                    val landscape = LocalConfiguration.current.orientation ==
+                        android.content.res.Configuration.ORIENTATION_LANDSCAPE
+                    val keyFont: TextUnit = st.keyFontSp.sp
+                    val keyHeight: Dp =
+                        (if (landscape) st.keyHeightLandDp else st.keyHeightPortDp).dp
                     if (state.keypadMode == KeypadMode.CALC) {
                         KeypadGrid(
                             onDigit = vm::key,
@@ -215,9 +338,14 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                             onClear = vm::clear,
                             onUndo = vm::undo,
                             onBackspace = vm::backspace,
+                            keyFontSp = keyFont,
+                            keyHeight = keyHeight,
+                            hapticsOn = state.settings.haptics,
+                            soundOn = state.settings.keySound,
                         )
                     }
                 }
+            }
             }
         }
 
@@ -235,7 +363,7 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                 confirmButton = {
                     TextButton(
                         onClick = {
-                            vm.renameNote(renameText)
+                            renameTarget?.let { vm.renameNoteById(it.id, renameText) }
                             renameOpen = false
                         },
                     ) { Text("OK") }
@@ -246,9 +374,56 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
             )
         }
 
-        val doomed = pendingDelete
-        if (doomed != null) {
+        // Long-press menu for a note: rename / duplicate / export / delete.
+        val menuNote = noteMenu
+        if (menuNote != null) {
             AlertDialog(
+                onDismissRequest = { noteMenu = null },
+                title = { Text(menuNote.name) },
+                text = {
+                    Column {
+                        TextButton(
+                            onClick = {
+                                noteMenu = null
+                                renameTarget = menuNote
+                                renameText = menuNote.name
+                                renameOpen = true
+                            },
+                        ) { Text("Rename") }
+                        TextButton(
+                            onClick = {
+                                noteMenu = null
+                                vm.duplicateNote(menuNote.id)
+                            },
+                        ) { Text("Duplicate") }
+                        TextButton(
+                            onClick = {
+                                noteMenu = null
+                                vm.exportNote(menuNote.id, asCalc = false)
+                                scope.launch { drawerState.close() }
+                            },
+                        ) { Text("Export to .txt") }
+                        TextButton(
+                            onClick = {
+                                noteMenu = null
+                                vm.exportNote(menuNote.id, asCalc = true)
+                                scope.launch { drawerState.close() }
+                            },
+                        ) { Text("Export to .calc") }
+                        TextButton(
+                            onClick = {
+                                noteMenu = null
+                                pendingDelete = menuNote
+                            },
+                        ) { Text("Delete") }
+                    }
+                },
+                confirmButton = {},
+            )
+        }
+
+        val doomed = pendingDelete
+        if (doomed != null) {            AlertDialog(
                 onDismissRequest = { pendingDelete = null },
                 title = { Text("Delete note?") },
                 text = { Text("\"${doomed.name}\" and all its lines will be gone. This cannot be undone.") },
@@ -283,7 +458,31 @@ private fun KeypadGrid(
     onClear: () -> Unit,
     onUndo: () -> Unit,
     onBackspace: () -> Unit,
+    keyFontSp: TextUnit,
+    keyHeight: Dp,
+    hapticsOn: Boolean,
+    soundOn: Boolean,
 ) {
+    val haptics = LocalHapticFeedback.current
+    val context = LocalContext.current
+    val audio = remember(context) {
+        context.getSystemService(android.media.AudioManager::class.java)
+    }
+    fun press(action: () -> Unit) {
+        if (hapticsOn) {
+            try {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            } catch (_: Throwable) {
+            }
+        }
+        if (soundOn) {
+            try {
+                audio?.playSoundEffect(android.media.AudioManager.FX_KEY_CLICK)
+            } catch (_: Throwable) {
+            }
+        }
+        action()
+    }
     // Pair(display label, action). Display uses x ÷ - glyphs; inserted text stays ASCII.
     val keys: List<Pair<String, () -> Unit>> = listOf(
         "AC" to onClear,
@@ -314,7 +513,13 @@ private fun KeypadGrid(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         items(keys) { (label, action) ->
-            Button(onClick = action) { Text(label) }
+            Button(
+                onClick = { press(action) },
+                modifier = Modifier.height(keyHeight),
+                contentPadding = PaddingValues(2.dp),
+            ) {
+                Text(label, fontSize = keyFontSp, maxLines = 1)
+            }
         }
     }
 }

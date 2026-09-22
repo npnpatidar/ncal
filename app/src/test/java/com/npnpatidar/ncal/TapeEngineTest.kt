@@ -2,6 +2,7 @@ package com.npnpatidar.ncal
 
 import com.npnpatidar.ncal.tape.CalcFile
 import com.npnpatidar.ncal.tape.CalcMeta
+import com.npnpatidar.ncal.tape.Grouping
 import com.npnpatidar.ncal.tape.TapeEvaluator
 import com.npnpatidar.ncal.tape.TapeFormatter
 import com.npnpatidar.ncal.tape.TapeLine
@@ -229,5 +230,29 @@ VARINFO=
         // running total (display-only), so the grand total stays 5: new input
         // always lands after the balance line in the editor.
         assertEquals(BigDecimal("5.00"), eval.grandTotal.setScale(2))
+    }
+
+    @Test
+    fun groupingWesternAndIndian() {
+        assertEquals("1,234,567.89", TapeFormatter.groupNumber("1234567.89", Grouping.COMMA))
+        assertEquals("123.00", TapeFormatter.groupNumber("123.00", Grouping.COMMA))
+        assertEquals("19.00%", TapeFormatter.groupNumber("19.00%", Grouping.COMMA))
+        assertEquals("12,34,567.89", TapeFormatter.groupNumber("1234567.89", Grouping.INDIAN))
+        assertEquals("1,00,000.00", TapeFormatter.groupNumber("100000.00", Grouping.INDIAN))
+        assertEquals("999.00", TapeFormatter.groupNumber("999.00", Grouping.INDIAN))
+    }
+
+    @Test
+    fun indentWidensCommentColumn() {
+        assertEquals("+ 10.00    a\n", TapeFormatter.pretty(" + 10.00 a\n", 2, indent = 4))
+    }
+
+    @Test
+    fun groupedDisplayStillParses() {
+        val pretty = TapeFormatter.pretty(" + 1234567.89 big\n", 2, grouping = Grouping.COMMA)
+        assertTrue(pretty.contains("1,234,567.89"))
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(pretty).lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertEquals(BigDecimal("1234567.89"), eval.grandTotal)
     }
 }

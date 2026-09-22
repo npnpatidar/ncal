@@ -5,6 +5,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.npnpatidar.ncal.export.CalcExport
 import com.npnpatidar.ncal.logging.NcalLogger
+import com.npnpatidar.ncal.settings.AppSettings
+import com.npnpatidar.ncal.settings.NoteSort
+import com.npnpatidar.ncal.settings.SettingsStore
 import com.npnpatidar.ncal.storage.NotesRepository
 import com.npnpatidar.ncal.tape.CalcFile
 import com.npnpatidar.ncal.tape.CalcMeta
@@ -29,8 +32,8 @@ data class TapeUiState(
     val memoryText: String = "0",
     val errors: List<String> = emptyList(),
     val message: String? = null,
-    val darkTheme: Boolean = false,
     val decimals: Int = 5,
+    val settings: AppSettings = AppSettings(),
     val notes: List<NotesRepository.NoteMeta> = emptyList(),
     val noteId: String = "",
     val noteName: String = "",
@@ -49,6 +52,7 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
     val state: StateFlow<TapeUiState> = _state.asStateFlow()
 
     private val repo = NotesRepository(app)
+    private val settingsStore = SettingsStore(app)
     private var memory: BigDecimal = BigDecimal.ZERO
     private val undoStack = ArrayDeque<String>(50)
     private val redoStack = ArrayDeque<String>(50)
@@ -62,11 +66,19 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         NcalLogger.i("Tape", "ViewModel init")
         @Suppress("DEPRECATION")
         val pkg = app.packageManager.getPackageInfo(app.packageName, 0)
-        _state.update { it.copy(appVersion = "v${pkg.versionName} (${pkg.versionCode})") }
-        var metas = repo.list()
+        val loaded = settingsStore.load()
+        decimals = loaded.decimals
+        _state.update {
+            it.copy(
+                appVersion = "v${pkg.versionName} (${pkg.versionCode})",
+                settings = loaded,
+                decimals = loaded.decimals,
+            )
+        }
+        var metas = refreshNotes()
         if (metas.isEmpty()) {
             repo.create("Note 1")
-            metas = repo.list()
+            metas = refreshNotes()
         }
         val last = repo.lastOpen()?.takeIf { id -> metas.any { it.id == id } }
             ?: metas.first().id
@@ -75,6 +87,16 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---- notes (sidebar) ----
+
+    /** Notes in the sidebar order of the current sort setting. */
+    private fun refreshNotes(): List<NotesRepository.NoteMeta> {
+        val metas = repo.list()
+        return when (_state.value.settings.noteSort) {
+            NoteSort.DATE -> metas.sortedByDescending { repo.lastModified(it.id) }
+            NoteSort.NAME_ASC -> metas.sortedBy { it.name.lowercase() }
+            NoteSort.NAME_DESC -> metas.sortedByDescending { it.name.lowercase() }
+        }
+    }
 
     fun selectNote(id: String) {
         if (id == _state.value.noteId) return
@@ -101,33 +123,101 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         repo.delete(id)
         NcalLogger.i("Tape", "deleteNote id=$id")
         if (id == _state.value.noteId) {
-            val rest = repo.list()
+            val rest = refreshNotes()
             if (rest.isEmpty()) loadNote(repo.create("Note 1"))
             else loadNote(rest.first().id)
             reevaluate("delete-switch")
         } else {
-            _state.update { it.copy(notes = repo.list()) }
+            _state.update { it.copy(notes = refreshNotes()) }
         }
     }
 
     fun renameNote(name: String) {
+        renameNoteById(_state.value.noteId, name)
+    }
+
+    fun renameNoteById(id: String, name: String) {
         val clean = name.trim().take(64)
-        if (clean.isBlank()) return
-        repo.rename(_state.value.noteId, clean)
-        _state.update { it.copy(noteName = clean, notes = repo.list()) }
+        if (id.isBlank() || clean.isBlank()) return
+        repo.rename(id, clean)
+        _state.update {
+            it.copy(
+                notes = refreshNotes(),
+                noteName = if (id == it.noteId) clean else it.noteName,
+            )
+        }
+    }
+
+    fun duplicateNote(id: String) {
+        if (id.isBlank()) return
+        saveCurrent()
+        val newId = repo.duplicate(id)
+        _state.update {
+            it.copy(
+                notes = refreshNotes(),
+                message = if (newId != null) "Duplicated note" else "Duplicate failed (see log)",
+            )
+        }
+    }
+
+    /** Export any note (current note exports live unsaved edits). */
+    fun exportNote(id: String, asCalc: Boolean) {
+        val s = _state.value
+        val name = s.notes.firstOrNull { it.id == id }?.name?.ifBlank { "ncal" } ?: "ncal"
+        val text = if (id == s.noteId) s.tapeText else repo.loadRaw(id)
+        if (text == null) {
+            _state.update { it.copy(message = "Export failed (see log)") }
+            return
+        }
+        val app = getApplication<Application>()
+        val uri = if (asCalc) CalcExport.exportCalc(app, name, text)
+        else CalcExport.exportTxt(app, name, text)
+        _state.update {
+            it.copy(message = if (uri != null) "Saved $name.${if (asCalc) "calc" else "txt"} → Download/ncal"
+                else "Export failed (see log)")
+        }
+    }
+
+    /** Import picked files (.calc/.txt, multiple) as new notes. */
+    fun importFiles(uris: List<android.net.Uri>) {
+        if (uris.isEmpty()) return
+        val app = getApplication<Application>()
+        var ok = 0
+        var firstId: String? = null
+        for (uri in uris) {
+            try {
+                val text = app.contentResolver.openInputStream(uri)
+                    ?.bufferedReader()?.readText() ?: continue
+                val name = displayNameOf(app, uri) ?: "Imported"
+                val id = repo.importDoc(name, text) ?: continue
+                if (firstId == null) firstId = id
+                ok++
+            } catch (t: Throwable) {
+                NcalLogger.e("Tape", "importFiles failed uri=$uri", t)
+            }
+        }
+        _state.update {
+            it.copy(
+                notes = refreshNotes(),
+                message = if (ok > 0) "Imported $ok note${if (ok == 1) "" else "s"}" else "Import failed (see log)",
+            )
+        }
+        NcalLogger.i("Tape", "importFiles ok=$ok/${uris.size}")
     }
 
     private fun loadNote(id: String) {
         val res = repo.load(id)
-        val notes = repo.list()
+        val notes = refreshNotes()
         val name = notes.firstOrNull { it.id == id }?.name ?: "Note"
         if (res != null) {
-            meta = res.meta
-            decimals = res.meta.decimals
+            // Keep the file's UUID for save continuity, but display decimals
+            // always follow the global setting (single source of truth).
+            meta = res.meta.copy(decimals = decimals)
+            val s = _state.value.settings
             _state.update {
                 it.copy(
-                    tapeText = TapeFormatter.pretty(res.tapeText, res.meta.decimals),
-                    decimals = res.meta.decimals,
+                    tapeText = TapeFormatter.pretty(res.tapeText, decimals, s.indent, s.grouping),
+                    decimals = decimals,
                     notes = notes,
                     noteId = id,
                     noteName = name,
@@ -139,6 +229,32 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         undoStack.clear()
         redoStack.clear()
         repo.setLastOpen(id)
+    }
+
+    // ---- settings ----
+
+    /** Persist settings; re-layout the tape when display settings change. */
+    fun updateSettings(next: AppSettings) {
+        val prev = _state.value.settings
+        settingsStore.save(next)
+        _state.update { it.copy(settings = next) }
+        NcalLogger.i("Tape", "settings decimals=${next.decimals} indent=${next.indent} " +
+            "grouping=${next.grouping} sort=${next.noteSort} theme=${next.themeMode}")
+        if (next.decimals != prev.decimals || next.indent != prev.indent || next.grouping != prev.grouping) {
+            decimals = next.decimals
+            meta = meta.copy(decimals = decimals)
+            _state.update {
+                it.copy(
+                    tapeText = TapeFormatter.pretty(it.tapeText, decimals, next.indent, next.grouping),
+                    decimals = decimals,
+                )
+            }
+            reevaluate("settings")
+            scheduleSave()
+        }
+        if (next.noteSort != prev.noteSort) {
+            _state.update { it.copy(notes = refreshNotes()) }
+        }
     }
 
     // ---- editing ----
@@ -194,9 +310,12 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         val doc = CalcFile.parse(cur)
         val eval = TapeEvaluator.evaluate(doc.lines, decimals)
         val bal = CalcFile.formatEntry('+', eval.openTotal, false, "", doc.meta.copy(decimals = decimals))
+        val s = _state.value.settings
         val next = TapeFormatter.pretty(
             "$cur\n${CalcFile.SEPARATOR}\n$bal",
             decimals,
+            s.indent,
+            s.grouping,
         )
         _state.update { it.copy(tapeText = next) }
         NcalLogger.i("Tape", "equals total=${eval.openTotal} subs=${eval.subtotals.size}")
@@ -248,23 +367,13 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         scheduleSave()
     }
 
-    fun toggleTheme() {
-        _state.update { it.copy(darkTheme = !it.darkTheme) }
-        NcalLogger.i("Tape", "theme dark=${_state.value.darkTheme}")
-    }
-
     fun setKeypadMode(mode: KeypadMode) {
         _state.update { it.copy(keypadMode = mode) }
         NcalLogger.i("Tape", "keypadMode=$mode")
     }
 
     fun setDecimals(d: Int) {
-        decimals = d.coerceIn(0, 8)
-        meta = meta.copy(decimals = decimals)
-        _state.update { it.copy(decimals = decimals) }
-        NcalLogger.i("Tape", "decimals=$decimals")
-        reevaluate("decimals")
-        scheduleSave()
+        updateSettings(_state.value.settings.copy(decimals = d.coerceIn(0, 8)))
     }
 
     // ---- export ----
@@ -284,12 +393,13 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
     fun importText(text: String) {
         pushUndo(_state.value.tapeText)
         val res = CalcExport.importToTapeText(text)
-        meta = res.meta
-        decimals = res.meta.decimals
+        // Keep the file's UUID; display follows the global decimals setting.
+        meta = res.meta.copy(decimals = decimals)
+        val s = _state.value.settings
         _state.update {
             it.copy(
-                tapeText = TapeFormatter.pretty(res.tapeText, res.meta.decimals),
-                decimals = res.meta.decimals,
+                tapeText = TapeFormatter.pretty(res.tapeText, decimals, s.indent, s.grouping),
+                decimals = decimals,
             )
         }
         NcalLogger.i("Tape", "imported grand=${res.grandTotal}")
@@ -354,6 +464,20 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
     private fun snapshot(text: String): String {
         val oneLine = text.replace("\n", "\\n")
         return "len=${text.length} <${oneLine.take(1500)}>"
+    }
+
+    private fun displayNameOf(app: Application, uri: android.net.Uri): String? {
+        return try {
+            app.contentResolver.query(
+                uri,
+                arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                null, null, null,
+            )?.use { c ->
+                if (c.moveToFirst()) c.getString(0) else null
+            } ?: uri.lastPathSegment?.substringAfterLast("/")
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     private fun pushUndo(text: String) {

@@ -51,8 +51,10 @@ app/src/main/java/com/npnpatidar/ncal/
   logging/NcalLogger.kt    logcat + file + ring buffer
   export/CalcExport.kt     .calc/.txt export, header-optional import
   ui/TapeViewModel.kt      state, keypad ops, memory, undo/redo, import/export
-  ui/TapeScreen.kt         tape editor + result panel + keypad
-app/src/test/.../TapeEngineTest.kt  11 unit tests (run in CI)
+  ui/TapeScreen.kt         notes drawer, tape editor + result strip + keypad, bottom bar
+  ui/SettingsScreen.kt     theme, decimals, indent, grouping, fonts, lines, keys, sound, sort
+  settings/AppSettings.kt  persisted settings model
+app/src/test/.../TapeEngineTest.kt  21 unit tests (run in CI)
 ```
 
 ## Status

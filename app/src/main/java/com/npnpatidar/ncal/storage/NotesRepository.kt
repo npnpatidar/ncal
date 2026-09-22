@@ -42,6 +42,15 @@ class NotesRepository(private val context: Context) {
 
     fun lastOpen(): String? = prefs.getString(KEY_LAST, null)
 
+    /** Last-modified time of a note file (for date sorting); 0 if missing. */
+    fun lastModified(id: String): Long {
+        return try {
+            file(id).takeIf { it.exists() }?.lastModified() ?: 0L
+        } catch (_: Throwable) {
+            0L
+        }
+    }
+
     fun setLastOpen(id: String) {
         prefs.edit().putString(KEY_LAST, id).apply()
     }
@@ -62,6 +71,54 @@ class NotesRepository(private val context: Context) {
         val clean = name.trim().ifBlank { return }.take(64)
         persist(list().map { if (it.id == id) it.copy(name = clean) else it })
         NcalLogger.i("Notes", "renamed id=$id name=$clean")
+    }
+
+    /** Duplicate a note (new id/UUID, "<name> copy"); returns the new id. */
+    fun duplicate(id: String): String? {
+        if (!file(id).exists()) return null
+        val newId = UUID.randomUUID().toString()
+        return try {
+            val text = file(id).readText()
+            val doc = CalcFile.parse(text)
+            val eval = TapeEvaluator.evaluate(doc.lines, doc.meta.decimals)
+            val meta = doc.meta.copy(uuid = newId, caretLine = 0, caretOffset = 0)
+            file(newId).writeText(CalcFile.write(doc.copy(meta = meta), eval.subtotals))
+            val oldName = list().firstOrNull { it.id == id }?.name ?: "Note"
+            persist(list().filter { it.id != newId } + NoteMeta(newId, "$oldName copy".take(64)))
+            NcalLogger.i("Notes", "duplicated id=$id -> $newId")
+            newId
+        } catch (t: Throwable) {
+            NcalLogger.e("Notes", "duplicate failed id=$id", t)
+            null
+        }
+    }
+
+    /** Import raw text (pasted, picked, or shared) as a new note; returns its id. */
+    fun importDoc(name: String, text: String): String? {
+        return try {
+            val doc = CalcFile.parse(text)
+            val eval = TapeEvaluator.evaluate(doc.lines, doc.meta.decimals)
+            val id = UUID.randomUUID().toString()
+            val meta = doc.meta.copy(uuid = id, caretLine = 0, caretOffset = 0)
+            file(id).writeText(CalcFile.write(doc.copy(meta = meta), eval.subtotals))
+            val clean = name.substringBeforeLast(".").trim().ifBlank { "Imported" }.take(64)
+            persist(list().filter { it.id != id } + NoteMeta(id, clean))
+            NcalLogger.i("Notes", "imported id=$id name=$clean lines=${doc.lines.size}")
+            id
+        } catch (t: Throwable) {
+            NcalLogger.e("Notes", "import failed name=$name", t)
+            null
+        }
+    }
+
+    /** Raw stored file text (with header), e.g. for exporting a background note. */
+    fun loadRaw(id: String): String? {
+        return try {
+            file(id).takeIf { it.exists() }?.readText()
+        } catch (t: Throwable) {
+            NcalLogger.e("Notes", "loadRaw failed id=$id", t)
+            null
+        }
     }
 
     fun delete(id: String) {
