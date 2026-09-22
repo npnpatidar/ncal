@@ -6,6 +6,7 @@ import com.npnpatidar.ncal.tape.Grouping
 import com.npnpatidar.ncal.tape.TapeEvaluator
 import com.npnpatidar.ncal.tape.TapeFormatter
 import com.npnpatidar.ncal.tape.TapeLine
+import com.npnpatidar.ncal.tape.TapeDoc
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -824,7 +825,6 @@ VARINFO=
         assertEquals("1,234,567", TapeFormatter.groupNumber("1234567", Grouping.COMMA))
         assertEquals("12,34,567", TapeFormatter.groupNumber("1234567", Grouping.INDIAN))
     }
-}
 
     @Test
     fun commaDecimalReadsAsDecimal() {
