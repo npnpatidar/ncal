@@ -4,6 +4,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.border
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.text.BasicTextField
@@ -290,6 +295,16 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                     // Tapping moves it freely; only ABC raises the keyboard.
                     val latestFont by rememberUpdatedState(st.tapeFontSp)
                     val cursorColor = MaterialTheme.colorScheme.primary
+                    // Blinking cursor like the reference: solid when unfocused.
+                    val blinkAlpha by rememberInfiniteTransition(label = "cursor").animateFloat(
+                        initialValue = 1f,
+                        targetValue = 0f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(durationMillis = 500),
+                            repeatMode = RepeatMode.Restart,
+                        ),
+                        label = "cursorBlink",
+                    )
                     var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
                     var fieldFocused by remember { mutableStateOf(false) }
                     val tapeField: @Composable () -> Unit = {
@@ -336,7 +351,9 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                                         Canvas(modifier = Modifier.matchParentSize()) {
                                             val w = maxOf(rect.width, 2.dp.toPx())
                                             drawRect(
-                                                color = cursorColor,
+                                                color = cursorColor.copy(
+                                                    alpha = if (fieldFocused) blinkAlpha else 1f,
+                                                ),
                                                 topLeft = Offset(rect.left, rect.top),
                                                 size = Size(w, rect.height),
                                             )
