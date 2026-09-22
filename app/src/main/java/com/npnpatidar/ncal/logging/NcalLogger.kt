@@ -44,8 +44,19 @@ object NcalLogger {
     private val uriCache = mutableMapOf<String, Uri>()
     private val uriLock = Any()
 
+    /** App version for log clarity, e.g. `v1.2.43 (43)`. Set in [init]. */
+    @Volatile var appVersion: String = "v?.? (?)"
+        private set
+
     fun init(context: Context) {
         appContext = context.applicationContext
+        appVersion = try {
+            @Suppress("DEPRECATION")
+            val pkg = context.packageManager.getPackageInfo(context.packageName, 0)
+            "v${pkg.versionName} (${pkg.versionCode})"
+        } catch (_: Throwable) {
+            "v?.? (?)"
+        }
         logDeviceInfo()
     }
 
@@ -124,7 +135,7 @@ object NcalLogger {
     private fun writeCrashFile(thread: Thread, throwable: Throwable) {
         val ctx = appContext
         val header = buildString {
-            appendLine("ncal CRASH ${timeFmt.format(Date())}")
+            appendLine("ncal CRASH ${timeFmt.format(Date())} $appVersion")
             appendLine("thread=${thread.name}")
             appendLine(
                 "device=${Build.MANUFACTURER} ${Build.MODEL} " +
@@ -148,7 +159,7 @@ object NcalLogger {
     private fun logDeviceInfo() {
         i(
             "App",
-            "start pkg=com.npnpatidar.ncal model=${Build.MANUFACTURER} ${Build.MODEL} " +
+            "start $appVersion pkg=com.npnpatidar.ncal model=${Build.MANUFACTURER} ${Build.MODEL} " +
                 "sdk=${Build.VERSION.SDK_INT} release=${Build.VERSION.RELEASE}",
         )
     }

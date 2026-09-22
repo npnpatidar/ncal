@@ -4,6 +4,18 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// Auto-versioning: every commit is a unique build — versionName 1.2.<count>,
+// versionCode <count>. Needs full git history (CI checks out fetch-depth 0).
+fun gitCount(): Int = try {
+    providers.exec {
+        commandLine("git", "rev-list", "--count", "HEAD")
+    }.standardOutput.asText.get().trim().toInt()
+} catch (_: Throwable) {
+    1
+}
+
+val appPatch = gitCount()
+
 android {
     namespace = "com.npnpatidar.ncal"
     compileSdk = 34
@@ -12,8 +24,8 @@ android {
         applicationId = "com.npnpatidar.ncal"
         minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = appPatch
+        versionName = "1.2.$appPatch"
     }
 
     buildTypes {

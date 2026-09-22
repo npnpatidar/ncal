@@ -18,9 +18,7 @@ class MainActivity : ComponentActivity() {
         // Download/ncal/crash-<ts>.log with the full stack trace.
         NcalLogger.installCrashHandler()
         NcalLogger.init(this)
-        @Suppress("DEPRECATION")
-        val pkg = packageManager.getPackageInfo(packageName, 0)
-        NcalLogger.i("App", "v${pkg.versionName} (${pkg.versionCode}) onCreate")
+        NcalLogger.i("App", "onCreate")
         try {
             setContent { TapeScreen() }
         } catch (t: Throwable) {
