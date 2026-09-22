@@ -202,11 +202,6 @@ object CalcFile {
             return null
         }
         val head = headNumRe.matchAt(rest, 0) ?: return null
-        val head = headNumRe.matchAt(rest, 0) ?: return null
-        if (!explicitOp) {
-            val after = rest.substring(head.range.last + 1)
-            if (!(after.isEmpty() || after[0].isWhitespace() || after.startsWith("%"))) return null
-        }
         val out = mutableListOf<RawEntry>()
         var curOp = op
         var curNum = head.groupValues[1]
