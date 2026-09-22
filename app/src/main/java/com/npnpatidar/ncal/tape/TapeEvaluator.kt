@@ -40,6 +40,10 @@ object TapeEvaluator {
 
     val MC = MathContext(34, RoundingMode.HALF_UP)
 
+    /** Exponents beyond this are rejected: exact BigDecimal powers of huge
+     * exponents (e.g. `^ 99999999`) would hang or OOM the app from one line. */
+    private const val MAX_EXP = 1000
+
     fun evaluate(lines: List<TapeLine>, decimals: Int): EvalResult {
         val results = mutableListOf<LineResult>()
         val subtotals = mutableListOf<BigDecimal>()
@@ -142,11 +146,19 @@ object TapeEvaluator {
                     curSet = true
                     continue
                 }
-                val target = when (e.op) {
-                    '*' -> base.multiply(factor, MC)
-                    '/' -> base.divide(factor, MC)
-                    else -> pow(base, factor, tag, errs)
+                if (e.op == '^') {
+                    val t = cappedPow(base, factor, tag, errs)
+                    if (t == null) {
+                        lineValues.add(Triple(index, null, errs.last()))
+                    } else {
+                        val delta = t.subtract(base, MC)
+                        lineValues.add(Triple(index, delta, null))
+                        cur = delta
+                    }
+                    curSet = true
+                    continue
                 }
+                val target = if (e.op == '*') base.multiply(factor, MC) else base.divide(factor, MC)
                 val delta = target.subtract(base, MC)
                 lineValues.add(Triple(index, delta, null))
                 cur = delta
@@ -186,11 +198,17 @@ object TapeEvaluator {
                             lineValues.add(Triple(index, null, msg))
                             continue
                         }
-                        cur = when (e.op) {
-                            '*' -> cur.multiply(factor, MC)
-                            '/' -> cur.divide(factor, MC)
-                            else -> pow(cur, factor, tag, errs)
+                        if (e.op == '^') {
+                            val t = cappedPow(cur, factor, tag, errs)
+                            if (t == null) {
+                                lineValues.add(Triple(index, null, errs.last()))
+                            } else {
+                                cur = t
+                                lineValues.add(Triple(index, cur, null))
+                            }
+                            continue
                         }
+                        cur = if (e.op == '*') cur.multiply(factor, MC) else cur.divide(factor, MC)
                         lineValues.add(Triple(index, cur, null))
                         continue
                     }
@@ -207,7 +225,13 @@ object TapeEvaluator {
                                 cur // keep previous chain value
                             } else cur.divide(rhs, MC)
                         }
-                        else -> pow(cur, rhs, tag, errs)
+                        else -> {
+                            val t = cappedPow(cur, rhs, tag, errs)
+                            if (t == null) {
+                                lineValues[lineValues.lastIndex] = Triple(index, null, errs.last())
+                            }
+                            t ?: cur
+                        }
                     }
                 }
                 else -> {
@@ -227,21 +251,45 @@ object TapeEvaluator {
     private fun percentOf(base: BigDecimal, pct: BigDecimal): BigDecimal =
         base.multiply(pct, MC).divide(BigDecimal(100), MC)
 
-    private fun pow(
+    /**
+     * Capped, crash-safe power for `^` lines. Rejects |exponent| > MAX_EXP
+     * (exact giant powers would hang or OOM the app from one typed line) and
+     * converts non-finite outcomes (`0^-1`, negative fractional powers like
+     * `(-8)^0.333`) into recorded errors instead of throwing out of
+     * evaluation. Returns null on failure (error already recorded).
+     */
+    private fun cappedPow(
         base: BigDecimal,
         exp: BigDecimal,
         tag: String,
         errs: MutableList<String>,
-    ): BigDecimal {
+    ): BigDecimal? {
+        if (exp.abs().compareTo(BigDecimal(MAX_EXP)) > 0) {
+            errs.add("$tag: exponent too large (max $MAX_EXP)")
+            return null
+        }
         return try {
             val ei = exp.intValueExact()
-            if (ei >= 0) base.pow(ei, MC) else BigDecimal(base.toDouble().pow(ei.toDouble()), MC)
+            if (ei >= 0) base.pow(ei, MC) else doublePow(base, ei.toDouble(), tag, errs)
         } catch (_: ArithmeticException) {
-            // Fractional exponent (e.g. ^ 0.5 = sqrt): fall back to double precision.
-            BigDecimal(base.toDouble().pow(exp.toDouble()), MC)
+            doublePow(base, exp.toDouble(), tag, errs)
         } catch (t: Throwable) {
             errs.add("$tag: invalid power (${t.message})")
-            base
+            null
+        }
+    }
+
+    private fun doublePow(
+        base: BigDecimal,
+        exp: Double,
+        tag: String,
+        errs: MutableList<String>,
+    ): BigDecimal? {
+        return try {
+            BigDecimal(base.toDouble().pow(exp), MC)
+        } catch (t: Throwable) {
+            errs.add("$tag: invalid power (${t.message})")
+            null
         }
     }
 }

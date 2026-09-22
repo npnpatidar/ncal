@@ -498,6 +498,48 @@ VARINFO=
     }
 
     @Test
+    fun exponentCapRejectsHuge() {
+        // `^ 100000` would hang/OOM materializing the exact power: error, keep chain.
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 2\n ^ 100000\n").lines, 2)
+        assertTrue(eval.errors.any { it.contains("exponent too large") })
+        assertAmount("2", eval.grandTotal)
+    }
+
+    @Test
+    fun exponentCapBoundaryOk() {
+        // 2^10 = 1024 is comfortably under the cap.
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 2\n ^ 10\n").lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertAmount("1024", eval.grandTotal)
+    }
+
+    @Test
+    fun exponentCapFirstEntry() {
+        // Chained `^ 100000` on a 100 subtotal errors and keeps 100.
+        val doc = CalcFile.parse(" + 100\n ------------------ \n + 100\n ^ 100000\n")
+        val eval = TapeEvaluator.evaluate(doc.lines, 2)
+        assertTrue(eval.errors.any { it.contains("exponent too large") })
+        assertAmount("100", eval.grandTotal)
+    }
+
+    @Test
+    fun zeroToNegativeOneIsErrorNotCrash() {
+        // `0 ^ -1` is undefined: error chip, total stays 0 (used to throw).
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 0\n ^ -1\n").lines, 2)
+        assertTrue(eval.errors.any { it.contains("invalid power") })
+        assertAmount("0", eval.grandTotal)
+    }
+
+    @Test
+    fun negativeFractionalPowerIsError() {
+        // `(-8) ^ 0.333` is NaN in doubles: error chip, total stays -8.
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + -8\n ^ 0.333\n").lines, 2)
+        assertTrue(eval.errors.any { it.contains("invalid power") })
+        assertAmount("-8", eval.grandTotal)
+    }
+}
+
+    @Test
     fun commaDecimalReadsAsDecimal() {
         // "3,50" is three-fifty, not 350 (was 350 before the fix).
         val eval = TapeEvaluator.evaluate(CalcFile.parse("3,50\n").lines, 2)
