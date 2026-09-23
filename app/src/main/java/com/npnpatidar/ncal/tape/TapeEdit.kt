@@ -10,7 +10,9 @@ package com.npnpatidar.ncal.tape
  *   extends it (`-`/`+` become the operand sign: `*-`) or replaces it
  *   (`*`/`/`/`^`), instead of stranding a second line.
  * - Appending at the very end trims trailing whitespace first (legacy tidy
- *   behavior: operator tokens must never create accidental blank sections).
+ *   behavior: operator tokens must never create accidental blank sections) —
+ *   except a trailing blank-line divider, which is preserved so typing after
+ *   `=` starts a fresh section instead of gluing onto the closed block.
  * - Backspace deletes the selection, else the char before the cursor; a
  *   collapsed cursor at 0 falls back to legacy end-deletion so ⌫ always
  *   does something.
@@ -43,7 +45,15 @@ object TapeEdit {
         }
         if (s == e && text.substring(s).isBlank()) {
             val trimmed = text.trimEnd()
-            val next = trimmed + token
+            // A trailing blank line is a section divider (`=` opens one):
+            // typing the next key must land INSIDE the fresh section, not
+            // glue onto the closed block above it. Plain trailing space or a
+            // single newline keeps the legacy tidy behavior.
+            val divider = trimmed.length < text.length &&
+                text.substring(trimmed.length).contains("\n\n")
+            val head = if (divider) "$trimmed\n\n" else trimmed
+            val tail = if (divider) token.dropWhile { it == '\n' } else token
+            val next = head + tail
             return next to next.length
         }
         val next = text.substring(0, s) + token + text.substring(e)

@@ -1158,4 +1158,39 @@ VARINFO=
     fun freshSectionCollapsesExtraBlanks() {
         assertEquals(" + 1\n\n", TapeEdit.openFreshSection(" + 1\n\n\n"))
     }
+
+    @Test
+    fun digitAfterSectionDividerStaysInFreshSection() {
+        // `=` leaves "…bal\n\n"; the next digit must NOT glue onto the balance.
+        assertEquals(" + 150\n\n3" to 9, TapeEdit.insertToken(" + 150\n\n", 8, 8, "3"))
+    }
+
+    @Test
+    fun operatorAfterSectionDividerKeepsBlank() {
+        assertEquals(" + 150\n\n + " to 11, TapeEdit.insertToken(" + 150\n\n", 8, 8, "\n + "))
+    }
+
+    @Test
+    fun legacyTrailingSpaceStillTrims() {
+        // No divider: single trailing space keeps the old tidy behavior.
+        assertEquals(" + 5\n3" to 6, TapeEdit.insertToken(" + 5\n ", 6, 6, "3"))
+    }
+
+    @Test
+    fun singleTrailingNewlineStillTrims() {
+        // lineup with the long-standing ` + 5\n` + op expectation.
+        assertEquals(" + 5\n3" to 6, TapeEdit.insertToken(" + 5\n", 5, 5, "3"))
+    }
+
+    @Test
+    fun endToEndTwoSectionsViaEqualsShape() {
+        // Tape exactly as `=` leaves it, plus the next typed entry:
+        // sections split 150 | 3, grand 153.
+        val text = " + 100\n + 50\n ------------------ \n + 150\n\n3"
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(text).lines, 2)
+        assertEquals(2, eval.sectionTotals.size)
+        assertAmount("150", eval.sectionTotals[0])
+        assertAmount("3", eval.sectionTotals[1])
+        assertAmount("153", eval.grandTotal)
+    }
 }
