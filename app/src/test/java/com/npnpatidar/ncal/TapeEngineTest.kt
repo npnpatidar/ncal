@@ -1192,4 +1192,43 @@ VARINFO=
         assertAmount("3", eval.sectionTotals[1])
         assertAmount("153", eval.grandTotal)
     }
+
+    @Test
+    fun digitAfterClosedBlockStartsNewSection() {
+        // Classic chaining: a fresh number after `=` starts a new section.
+        val closed = " + 100\n + 50\n ------------------ \n + 150"
+        val (next, cursor) = TapeEdit.insertToken(closed, closed.length, closed.length, "3")
+        assertEquals("$closed\n\n3", next)
+        assertEquals(next.length, cursor)
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(next).lines, 2)
+        assertEquals(2, eval.sectionTotals.size)
+        assertAmount("150", eval.sectionTotals[0])
+        assertAmount("3", eval.sectionTotals[1])
+    }
+
+    @Test
+    fun digitAfterBareSeparatorStartsNewSection() {
+        // A lone `=` (ABC) with no balance yet: numbers still start fresh.
+        val closed = " + 100\n="
+        val (next, _) = TapeEdit.insertToken(closed, closed.length, closed.length, "3")
+        assertEquals("$closed\n\n3", next)
+    }
+
+    @Test
+    fun operatorAfterClosedBlockChainsSameSection() {
+        // `100 + 50 = * 2` stays one calculation: 300, single section.
+        val closed = " + 100\n + 50\n ------------------ \n + 150"
+        val (t1, c1) = TapeEdit.insertToken(closed, closed.length, closed.length, "\n * ")
+        assertEquals("$closed\n * ", t1)
+        val (t2, _) = TapeEdit.insertToken(t1, c1, c1, "2")
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(t2).lines, 2)
+        assertEquals(1, eval.sectionTotals.size)
+        assertAmount("300", eval.grandTotal)
+    }
+
+    @Test
+    fun digitAfterOpenEntryStillAppends() {
+        // Mid-calculation typing is untouched: glues onto the open line.
+        assertEquals(" + 53" to 5, TapeEdit.insertToken(" + 5", 4, 4, "3"))
+    }
 }

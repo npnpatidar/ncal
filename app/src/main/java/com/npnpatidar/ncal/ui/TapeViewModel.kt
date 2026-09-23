@@ -383,12 +383,15 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         val eval = TapeEvaluator.evaluate(doc.lines, decimals)
         val bal = CalcFile.formatEntry('+', eval.openTotal, false, "", doc.meta.copy(decimals = decimals))
         val s = _state.value.settings
-        val next = TapeEdit.openFreshSection(TapeFormatter.pretty(
+        // No trailing blank: the closed block stays chainable (`* 2 =`
+        // continues from the balance); a following number — or another `=`
+        // with nothing new — opens the next section instead.
+        val next = TapeFormatter.pretty(
             "$cur\n${CalcFile.SEPARATOR}\n$bal",
             decimals,
             s.indent,
             s.grouping,
-        ))
+        )
         _state.update { it.copy(tapeText = next, tapeSel = TextRange(next.length)) }
         NcalLogger.i("Tape", "equals total=${eval.openTotal} subs=${eval.subtotals.size}")
         NcalLogger.d("Tape", "equals after: ${snapshot(next)}")

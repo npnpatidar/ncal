@@ -12,7 +12,9 @@ package com.npnpatidar.ncal.tape
  * - Appending at the very end trims trailing whitespace first (legacy tidy
  *   behavior: operator tokens must never create accidental blank sections) —
  *   except a trailing blank-line divider, which is preserved so typing after
- *   `=` starts a fresh section instead of gluing onto the closed block.
+ *   a section break starts a fresh section; and a fresh number typed right
+ *   after a closed block (separator/balance) opens a new section, while an
+ *   operator continues the chain.
  * - Backspace deletes the selection, else the char before the cursor; a
  *   collapsed cursor at 0 falls back to legacy end-deletion so ⌫ always
  *   does something.
@@ -45,15 +47,27 @@ object TapeEdit {
         }
         if (s == e && text.substring(s).isBlank()) {
             val trimmed = text.trimEnd()
-            // A trailing blank line is a section divider (`=` opens one):
-            // typing the next key must land INSIDE the fresh section, not
-            // glue onto the closed block above it. Plain trailing space or a
-            // single newline keeps the legacy tidy behavior.
-            val divider = trimmed.length < text.length &&
-                text.substring(trimmed.length).contains("\n\n")
-            val head = if (divider) "$trimmed\n\n" else trimmed
-            val tail = if (divider) token.dropWhile { it == '\n' } else token
-            val next = head + tail
+            val gap = if (trimmed.length < text.length) text.substring(trimmed.length) else ""
+            if (gap.contains("\n\n")) {
+                // A trailing blank line is a section divider (`=` opens one):
+                // typing the next key must land INSIDE the fresh section, not
+                // glue onto the closed block above it.
+                val next = "$trimmed\n\n" + token.dropWhile { it == '\n' }
+                return next to next.length
+            }
+            if (opChar == null && token.isNotBlank()) {
+                // Fresh number right after a closed block starts a new section
+                // (classic chaining: operators continue the chain, numbers
+                // start fresh). Entries mid-block keep the legacy behavior.
+                val last = CalcFile.parse(trimmed).lines.lastOrNull { it !is TapeLine.Blank }
+                if (last is TapeLine.Separator || last is TapeLine.Balance) {
+                    val next = "$trimmed\n\n$token"
+                    return next to next.length
+                }
+            }
+            // Plain trailing space or a single newline keeps the legacy tidy
+            // behavior (operator tokens must never create blank sections).
+            val next = trimmed + token
             return next to next.length
         }
         val next = text.substring(0, s) + token + text.substring(e)
