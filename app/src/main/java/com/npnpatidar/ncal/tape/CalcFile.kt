@@ -37,6 +37,9 @@ object CalcFile {
     /** True for an open operator line with no digits yet (` * `, ` *- `). */
     fun isBareOpLine(raw: String): Boolean = bareOpRe.matches(raw)
 
+    /** True when the text carries a `.calc` header block (explicit metadata). */
+    fun hasHeader(text: String): Boolean = text.contains(HEADER_OPEN)
+
     /**
      * Hint when a comment line looks like an unsupported construct: brackets
      * holding a calculation (`(5+3)`), or a variable definition (`x = 5`).

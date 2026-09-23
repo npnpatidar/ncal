@@ -189,13 +189,22 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         val app = getApplication<Application>()
         var ok = 0
         var firstId: String? = null
+        var adopted = false
         for (uri in uris) {
             try {
                 val text = app.contentResolver.openInputStream(uri)
                     ?.bufferedReader()?.readText() ?: continue
                 val name = displayNameOf(app, uri) ?: "Imported"
                 val id = repo.importDoc(name, text) ?: continue
-                if (firstId == null) firstId = id
+                if (firstId == null) {
+                    firstId = id
+                    // Adopt the first real .calc file's decimals into the
+                    // global setting (headerless pastes keep current).
+                    if (!adopted && CalcFile.hasHeader(text)) {
+                        adopted = true
+                        adoptDecimals(CalcFile.parse(text).meta.decimals)
+                    }
+                }
                 ok++
             } catch (t: Throwable) {
                 NcalLogger.e("Tape", "importFiles failed uri=$uri", t)
@@ -297,42 +306,28 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         scheduleSave()
     }
 
-    /** Keypad press: append a token at the end of the tape. An operator key
-     * pressed on an open operator line (` * `) extends it (`-`/`+` become the
-     * operand sign: `*-`) or replaces it (`*`/`/`), exactly like CalcTape —
-     * it never strands a second line. */
+    /** Keypad press: inserts at the cursor (replacing any selection), so
+     * mid-tape edits land where the cursor is. Operator-on-bare-line
+     * extension, end-trimming and caret rules live in [TapeEdit] (unit-tested).
+     */
     fun key(token: String) {
-        val prev = _state.value.tapeText
-        pushUndo(prev)
-        // Trim trailing whitespace first so operator tokens ("\n + ") never
-        // create an accidental blank line (a blank starts a new section).
-        val trimmed = prev.trimEnd()
-        val lastLine = trimmed.substringAfterLast("\n")
-        val opChar = if (token.startsWith("\n")) token.trim().firstOrNull() else null
-        val next = if (
-            opChar != null &&
-            (opChar == '+' || opChar == '-' || opChar == '*' || opChar == '/' || opChar == '^') &&
-            CalcFile.isBareOpLine(lastLine)
-        ) {
-            val firstOp = lastLine.trim()[0]
-            val newLast = if (opChar == '+' || opChar == '-') " $firstOp $opChar" else " $opChar "
-            trimmed.dropLast(lastLine.length) + newLast
-        } else {
-            trimmed + token
-        }
-        _state.update { it.copy(tapeText = next, tapeSel = TextRange(next.length)) }
+        val s = _state.value
+        pushUndo(s.tapeText)
+        val (next, cursor) = TapeEdit.insertToken(s.tapeText, s.tapeSel.start, s.tapeSel.end, token)
+        _state.update { it.copy(tapeText = next, tapeSel = TextRange(cursor)) }
         NcalLogger.d("Tape", "key=${token.trim()} lines=${next.lines().size}")
         reevaluate("key")
         scheduleSave()
     }
 
-    /** Backspace key: delete the last character. */
+    /** Backspace key: deletes the selection, else the char before the cursor
+     * (legacy end-deletion when collapsed at 0). See [TapeEdit]. */
     fun backspace() {
-        val prev = _state.value.tapeText
-        val next = prev.trimEnd().dropLast(1)
-        if (next == prev) return
-        pushUndo(prev)
-        _state.update { it.copy(tapeText = next, tapeSel = TextRange(next.length)) }
+        val s = _state.value
+        val (next, cursor) = TapeEdit.deleteAt(s.tapeText, s.tapeSel.start, s.tapeSel.end)
+        if (next == s.tapeText) return
+        pushUndo(s.tapeText)
+        _state.update { it.copy(tapeText = next, tapeSel = TextRange(cursor)) }
         NcalLogger.d("Tape", "backspace")
         reevaluate("backspace")
         scheduleSave()
@@ -453,6 +448,19 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         updateSettings(_state.value.settings.copy(decimals = d.coerceIn(0, 8)))
     }
 
+    /**
+     * Adopt a file's decimals into the global setting (only for real .calc
+     * headers — headerless pastes keep the current setting). No-op when
+     * already matching.
+     */
+    private fun adoptDecimals(fileDecimals: Int) {
+        val d = fileDecimals.coerceIn(0, 8)
+        if (d != decimals) {
+            NcalLogger.i("Tape", "adopting file decimals=$d")
+            updateSettings(_state.value.settings.copy(decimals = d))
+        }
+    }
+
     // ---- export ----
 
     fun exportCalc() {
@@ -470,6 +478,9 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
     fun importText(text: String) {
         pushUndo(_state.value.tapeText)
         val res = CalcExport.importToTapeText(text)
+        if (CalcFile.hasHeader(text)) {
+            adoptDecimals(res.meta.decimals)
+        }
         // Keep the file's UUID; display follows the global decimals setting.
         meta = res.meta.copy(decimals = decimals)
         val s = _state.value.settings

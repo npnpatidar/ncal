@@ -7,6 +7,7 @@ import com.npnpatidar.ncal.tape.TapeEvaluator
 import com.npnpatidar.ncal.tape.TapeFormatter
 import com.npnpatidar.ncal.tape.TapeLine
 import com.npnpatidar.ncal.tape.TapeDoc
+import com.npnpatidar.ncal.tape.TapeEdit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -613,6 +614,14 @@ VARINFO=
     }
 
     @Test
+    fun hasHeaderDetection() {
+        assertTrue(CalcFile.hasHeader("<SFRCalculatorHeader>\nDECIMALS=2\n</SFRCalculatorHeader>\n + 1\n"))
+        assertTrue(CalcFile.hasHeader("\uFEFF<SFRCalculatorHeader>\n</SFRCalculatorHeader>\n"))
+        assertFalse(CalcFile.hasHeader(" + 1\njust text\n"))
+        assertFalse(CalcFile.hasHeader(""))
+    }
+
+    @Test
     fun crlfHandled() {
         val eval = TapeEvaluator.evaluate(CalcFile.parse("+ 5\r\n+ 6\r\n").lines, 2)
         assertAmount("11", eval.grandTotal)
@@ -829,6 +838,139 @@ VARINFO=
         assertEquals("1,234,567", TapeFormatter.groupNumber("1234567", Grouping.COMMA))
         assertEquals("12,34,567", TapeFormatter.groupNumber("1234567", Grouping.INDIAN))
     }
+
+    // ---------- cursor-aware editing (TapeEdit) ----------
+
+    @Test
+    fun insertDigitAtEnd() {
+        assertEquals(" + 57" to 5, TapeEdit.insertToken(" + 5", 4, 4, "7"))
+    }
+
+    @Test
+    fun insertOpAtEndKeepsLegacy() {
+        assertEquals(" + 5\n + " to 8, TapeEdit.insertToken(" + 5", 4, 4, "\n + "))
+    }
+
+    @Test
+    fun insertOpTrimsTrailingBlank() {
+        // No accidental blank section when appending after trailing newline.
+        assertEquals(" + 5\n + " to 8, TapeEdit.insertToken(" + 5\n", 5, 5, "\n + "))
+    }
+
+    @Test
+    fun insertDigitMidTape() {
+        assertEquals(" + 15234" to 5, TapeEdit.insertToken(" + 1234", 4, 4, "5"))
+    }
+
+    @Test
+    fun insertReplacesRange() {
+        assertEquals(" + 934" to 4, TapeEdit.insertToken(" + 1234", 3, 5, "9"))
+    }
+
+    @Test
+    fun insertReversedRangeNormalizes() {
+        assertEquals(" + 934" to 4, TapeEdit.insertToken(" + 1234", 5, 3, "9"))
+    }
+
+    @Test
+    fun insertOpMidLineSplits() {
+        // Operator mid-line starts a new entry line, like ABC typing.
+        assertEquals(" + 1\n + 234" to 8, TapeEdit.insertToken(" + 1234", 4, 4, "\n + "))
+    }
+
+    @Test
+    fun extendBareOpWithSign() {
+        // `*` then `-` on the open line becomes `*-`, not a new line.
+        assertEquals(" + 5\n * -" to 9, TapeEdit.insertToken(" + 5\n * ", 8, 8, "\n - "))
+    }
+
+    @Test
+    fun replaceBareOp() {
+        assertEquals(" / " to 3, TapeEdit.insertToken(" * ", 3, 3, "\n / "))
+    }
+
+    @Test
+    fun swapSignOnBareOp() {
+        assertEquals(" * +" to 5, TapeEdit.insertToken(" * -", 4, 4, "\n + "))
+    }
+
+    @Test
+    fun insertIntoEmptyTape() {
+        assertEquals("5" to 1, TapeEdit.insertToken("", 0, 0, "5"))
+    }
+
+    @Test
+    fun outOfBoundsClampedToEnd() {
+        assertEquals("abx" to 3, TapeEdit.insertToken("ab", 99, 99, "x"))
+    }
+
+    @Test
+    fun percentAppendsAtEnd() {
+        assertEquals(" + 100% " to 8, TapeEdit.insertToken(" + 100", 6, 6, "% "))
+    }
+
+    @Test
+    fun insertDigitAtZero() {
+        assertEquals("9 + 5" to 1, TapeEdit.insertToken(" + 5", 0, 0, "9"))
+    }
+
+    @Test
+    fun keypadFlowBuildsSignedMult() {
+        // Full `* -2` flow through the pure core, then evaluated.
+        val (t1, c1) = TapeEdit.insertToken(" + 5\n * ", 8, 8, "\n - ")
+        assertEquals(" + 5\n * -" to 9, t1 to c1)
+        val (t2, c2) = TapeEdit.insertToken(t1, c1, c1, "2")
+        assertEquals(" + 5\n * -2" to 10, t2 to c2)
+        assertAmount("-10", TapeEvaluator.evaluate(CalcFile.parse(t2).lines, 2).grandTotal)
+    }
+
+    @Test
+    fun insertMultilineTokenOverRange() {
+        assertEquals("\n + \nc" to 4, TapeEdit.insertToken("a\nb\nc", 0, 3, "\n + "))
+    }
+
+    @Test
+    fun deleteRange() {
+        assertEquals(" + 34" to 3, TapeEdit.deleteAt(" + 1234", 3, 5))
+    }
+
+    @Test
+    fun deleteBeforeCursor() {
+        assertEquals(" + 134" to 3, TapeEdit.deleteAt(" + 1234", 4, 4))
+    }
+
+    @Test
+    fun deleteAtZeroFallsBackToEnd() {
+        // Legacy calculator behavior: ⌫ at document start deletes last char.
+        assertEquals(" + " to 3, TapeEdit.deleteAt(" + 5", 0, 0))
+    }
+
+    @Test
+    fun deleteEmptyIsNoop() {
+        assertEquals("" to 0, TapeEdit.deleteAt("", 0, 0))
+    }
+
+    @Test
+    fun deleteReversedRange() {
+        assertEquals(" + 34" to 3, TapeEdit.deleteAt(" + 1234", 5, 3))
+    }
+
+    @Test
+    fun deleteTrailingNewlineJoins() {
+        // Cursor after trailing newline: removes the newline (standard).
+        assertEquals(" + 5" to 5, TapeEdit.deleteAt(" + 5\n", 6, 6))
+    }
+
+    @Test
+    fun deleteWholeContent() {
+        assertEquals("" to 0, TapeEdit.deleteAt("ab", 0, 2))
+    }
+
+    @Test
+    fun deleteClampsNegative() {
+        assertEquals("a" to 1, TapeEdit.deleteAt("ab", -5, -1))
+    }
+}
 
     @Test
     fun commaDecimalReadsAsDecimal() {
