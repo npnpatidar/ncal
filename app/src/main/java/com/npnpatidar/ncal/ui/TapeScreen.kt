@@ -96,6 +96,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.platform.LocalConfiguration
@@ -347,6 +348,9 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                     )
                     var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
                     var fieldFocused by remember { mutableStateOf(false) }
+                    // True while press-hold cursor-follow is steering the caret:
+                    // shows the teardrop handle under the finger.
+                    var followActive by remember(state.noteId) { mutableStateOf(false) }
                     val tapeField: @Composable () -> Unit = {
                         BasicTextField(
                             value = TextFieldValue(state.tapeText, state.tapeSel),
@@ -363,6 +367,7 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                                     view = LocalView.current,
                                     getLayout = { textLayout },
                                     onCursor = vm::placeCursor,
+                                    onFollowChange = { followActive = it },
                                 ),
                             readOnly = state.keypadMode != KeypadMode.SYSTEM,
                             textStyle = MaterialTheme.typography.bodyLarge.copy(
@@ -395,6 +400,24 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                                                 topLeft = Offset(rect.left, rect.top),
                                                 size = Size(w, rect.height),
                                             )
+                                            // Finger-drag handle: a teardrop below the
+                                            // cursor, visible while the fingertip covers
+                                            // the text — its tip marks the exact spot.
+                                            if (followActive) {
+                                                val cx = rect.left + rect.width / 2f
+                                                val tipY = rect.bottom + 2.dp.toPx()
+                                                val r = 9.dp.toPx()
+                                                val bulbY = tipY + 22.dp.toPx() + r
+                                                val half = 6.dp.toPx()
+                                                val drop = Path().apply {
+                                                    moveTo(cx - half, bulbY - half)
+                                                    lineTo(cx + half, bulbY - half)
+                                                    lineTo(cx, tipY)
+                                                    close()
+                                                }
+                                                drawPath(drop, cursorColor)
+                                                drawCircle(cursorColor, r, Offset(cx, bulbY))
+                                            }
                                         }
                                     }
                                 }
@@ -690,6 +713,7 @@ private fun Modifier.cursorDragFollow(
     view: android.view.View,
     getLayout: () -> TextLayoutResult?,
     onCursor: (Int) -> Unit,
+    onFollowChange: (Boolean) -> Unit,
 ): Modifier = pointerInput(enabled) {
     if (!enabled) return@pointerInput
     awaitEachGesture {
@@ -714,20 +738,25 @@ private fun Modifier.cursorDragFollow(
             view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
         } catch (_: Throwable) {
         }
-        while (true) {
-            val ev = awaitPointerEvent(PointerEventPass.Initial)
-            val pressed = ev.changes.filter { it.pressed }
-            if (pressed.isEmpty() || pressed.size > 1) break
-            val off = try {
-                getLayout()?.getOffsetForPosition(pressed[0].position)
-            } catch (_: Throwable) {
-                null
+        onFollowChange(true)
+        try {
+            while (true) {
+                val ev = awaitPointerEvent(PointerEventPass.Initial)
+                val pressed = ev.changes.filter { it.pressed }
+                if (pressed.isEmpty() || pressed.size > 1) break
+                val off = try {
+                    getLayout()?.getOffsetForPosition(pressed[0].position)
+                } catch (_: Throwable) {
+                    null
+                }
+                if (off != null) {
+                    onCursor(off)
+                    pressed.forEach { it.consume() }
+                }
+                if (ev.changes.all { !it.pressed }) break
             }
-            if (off != null) {
-                onCursor(off)
-                pressed.forEach { it.consume() }
-            }
-            if (ev.changes.all { !it.pressed }) break
+        } finally {
+            onFollowChange(false)
         }
     }
 }
