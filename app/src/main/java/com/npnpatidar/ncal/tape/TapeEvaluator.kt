@@ -21,6 +21,12 @@ data class EvalResult(
      * Drives live display refresh: the shown subtotal always tracks this.
      */
     val balanceTotals: Map<Int, BigDecimal>,
+    /**
+     * Every independent section's total in order (blank-separated; the last
+     * entry is the currently open section). Sums to [grandTotal]. The strip
+     * shows the section under the cursor, like the reference tape.
+     */
+    val sectionTotals: List<BigDecimal>,
     val errors: List<String>,
 )
 
@@ -100,7 +106,7 @@ object TapeEvaluator {
         }
         flushBlock()
         val grand = sectionTotals.fold(running) { acc, s -> acc.add(s, MC) }
-        return EvalResult(results, subtotals, grand, running, balanceTotals, errors)
+        return EvalResult(results, subtotals, grand, running, balanceTotals, sectionTotals + running, errors)
     }
 
     private data class IndexedEntry(val index: Int, val entry: TapeLine.Entry)
@@ -112,6 +118,17 @@ object TapeEvaluator {
     fun hasOpenEntries(lines: List<TapeLine>): Boolean {
         val cut = lines.indexOfLast { it is TapeLine.Separator || it is TapeLine.Balance }
         return lines.drop(cut + 1).any { it is TapeLine.Entry }
+    }
+
+    /**
+     * Which blank-separated section contains [lineIndex] (only blanks strictly
+     * before it count; a cursor sitting exactly on a divider belongs to the
+     * section above it).
+     */
+    fun sectionIndexForLine(lines: List<TapeLine>, lineIndex: Int): Int {
+        if (lines.isEmpty()) return 0
+        val idx = lineIndex.coerceIn(0, lines.size - 1)
+        return lines.take(idx).count { it is TapeLine.Blank }
     }
 
     /**

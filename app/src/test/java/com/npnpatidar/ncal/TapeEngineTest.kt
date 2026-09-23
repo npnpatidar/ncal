@@ -970,7 +970,6 @@ VARINFO=
     fun deleteClampsNegative() {
         assertEquals("a" to 1, TapeEdit.deleteAt("ab", -5, -1))
     }
-}
 
     @Test
     fun commaDecimalReadsAsDecimal() {
@@ -1100,5 +1099,45 @@ VARINFO=
         // "+ - 2" (sign separated by space) still means -2.
         val eval = TapeEvaluator.evaluate(CalcFile.parse("+ - 2\n").lines, 2)
         assertAmount("-2", eval.grandTotal)
+    }
+
+    @Test
+    fun sectionTotalsListedInOrder() {
+        // Two blank-separated calculations: per-section totals + grand sum.
+        // (No trailing newline here so no trailing empty section is banked;
+        // real tapes end with one, which the strip mapping skips over.)
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 5\n\n + 7").lines, 2)
+        assertEquals(2, eval.sectionTotals.size)
+        assertAmount("5", eval.sectionTotals[0])
+        assertAmount("7", eval.sectionTotals[1])
+        assertAmount("12", eval.grandTotal)
+    }
+
+    @Test
+    fun threeSections() {
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 1\n\n + 2\n\n + 3\n").lines, 2)
+        assertEquals(listOf("1", "2", "3"),
+            eval.sectionTotals.map { it.stripTrailingZeros().toPlainString() })
+        assertAmount("6", eval.grandTotal)
+    }
+
+    @Test
+    fun sectionIndexForLine() {
+        // Lines: 0 Entry, 1 Blank, 2 Entry(+trailing blank line 3).
+        val lines = CalcFile.parse(" + 5\n\n + 7\n").lines
+        assertEquals(0, TapeEvaluator.sectionIndexForLine(lines, 0))
+        assertEquals(0, TapeEvaluator.sectionIndexForLine(lines, 1))
+        assertEquals(1, TapeEvaluator.sectionIndexForLine(lines, 2))
+        assertEquals(1, TapeEvaluator.sectionIndexForLine(lines, 3))
+        assertEquals(0, TapeEvaluator.sectionIndexForLine(emptyList(), 99))
+        assertEquals(1, TapeEvaluator.sectionIndexForLine(lines, 999))
+    }
+
+    @Test
+    fun singleSectionUnchanged() {
+        // No blanks: one section equal to the grand total.
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 5\n + 7").lines, 2)
+        assertEquals(1, eval.sectionTotals.size)
+        assertAmount("12", eval.sectionTotals[0])
     }
 }

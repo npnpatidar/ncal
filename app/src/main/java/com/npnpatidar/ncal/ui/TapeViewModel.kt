@@ -544,22 +544,40 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
             }
         for (w in finalDoc.warnings) NcalLogger.w("Tape", "import: $w")
         for (e in finalEval.errors) NcalLogger.w("Tape", "eval: $e")
+        // The strip shows the section under the cursor (like the reference
+        // tape), not the grand total: each blank-separated calculation keeps
+        // its own total while the grand still sums everything.
+        val cursorLine = lineIndexAt(text, sel.start)
+        val sectionIdx = TapeEvaluator.sectionIndexForLine(finalDoc.lines, cursorLine)
+        val sectionTotal = finalEval.sectionTotals.getOrElse(sectionIdx) { finalEval.grandTotal }
         NcalLogger.d(
             "Tape",
             "eval why=$why lines=${finalDoc.lines.size} subs=${finalEval.subtotals.size} " +
-                "grand=${finalEval.grandTotal} errs=${finalEval.errors.size}",
+                "grand=${finalEval.grandTotal} section=$sectionIdx/${sectionTotal} errs=${finalEval.errors.size}",
         )
         _state.update {
             it.copy(
                 tapeText = text,
                 tapeSel = sel,
                 lineMarks = TapeFormatter.markLines(finalDoc, finalEval),
-                totalText = fmt(finalEval.grandTotal),
+                totalText = fmt(sectionTotal),
                 grandText = fmt(finalEval.grandTotal),
                 errors = finalEval.errors,
                 decimals = decimals,
             )
         }
+    }
+
+    /** 0-based line index containing the offset (clamped). */
+    private fun lineIndexAt(text: String, off: Int): Int {
+        val lines = text.split("\n")
+        var rest = off.coerceIn(0, text.length)
+        var li = 0
+        while (li < lines.size - 1 && rest > lines[li].length) {
+            rest -= lines[li].length + 1
+            li++
+        }
+        return li
     }
 
     /** Remap a cursor across a line-count-preserving rewrite (same line, clamped column). */
