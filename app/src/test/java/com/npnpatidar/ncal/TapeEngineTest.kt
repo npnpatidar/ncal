@@ -1231,4 +1231,214 @@ VARINFO=
         // Mid-calculation typing is untouched: glues onto the open line.
         assertEquals(" + 53" to 5, TapeEdit.insertToken(" + 5", 4, 4, "3"))
     }
+
+    // ---------- BODMAS: precedence across tape lines ----------
+    //
+    // A tape line holds ONE operator + amount, so precedence plays out across
+    // lines: `* / ^` lines fold into the open multiplicative chain (binding
+    // tighter than `+ -`), applied left-to-right onto the running value —
+    // tape semantics, verified line by line below.
+
+    private fun bodmasTotal(tape: String): BigDecimal =
+        TapeEvaluator.evaluate(CalcFile.parse(tape).lines, 2).grandTotal
+
+    @Test
+    fun bodmasMultBindsBeforeAdd() {
+        // 10 + (2*3) = 16, NOT (10+2)*3 = 36.
+        assertAmount("16", bodmasTotal(" + 10\n + 2\n * 3\n"))
+    }
+
+    @Test
+    fun bodmasDivBindsBeforeSubtract() {
+        // (100/4) - 5 = 25 - 5 = 20.
+        assertAmount("20", bodmasTotal(" + 100\n / 4\n - 5\n"))
+    }
+
+    @Test
+    fun bodmasSubtractThenMultiply() {
+        // 100 - (10*3) = 70, NOT (100-10)*3 = 270.
+        assertAmount("70", bodmasTotal(" + 100\n - 10\n * 3\n"))
+    }
+
+    @Test
+    fun bodmasMultiplyThenSubtract() {
+        // (100*3) - 10 = 290.
+        assertAmount("290", bodmasTotal(" + 100\n * 3\n - 10\n"))
+    }
+
+    @Test
+    fun bodmasTwoMultRuns() {
+        // (2*3) + (4*5) = 6 + 20 = 26.
+        assertAmount("26", bodmasTotal(" + 2\n * 3\n + 4\n * 5\n"))
+    }
+
+    @Test
+    fun bodmasAddSubLeftToRight() {
+        // Same level goes top-to-bottom: 100-30+5-2 = 73.
+        assertAmount("73", bodmasTotal(" + 100\n - 30\n + 5\n - 2\n"))
+    }
+
+    @Test
+    fun bodmasDivChainLeftAssoc() {
+        // ((120/2)/3)/4 = 5, left-associative.
+        assertAmount("5", bodmasTotal(" + 120\n / 2\n / 3\n / 4\n"))
+    }
+
+    @Test
+    fun bodmasPowBindsBeforeAdd() {
+        // (3^2) + 1 = 10.
+        assertAmount("10", bodmasTotal(" + 3\n ^ 2\n + 1\n"))
+    }
+
+    @Test
+    fun bodmasPowAppliesToOpenChain() {
+        // Tape semantics: ^ applies to the running chain, so (2*3)^2 = 36
+        // (textbook 2*3^2 = 18 does NOT apply across tape lines).
+        assertAmount("36", bodmasTotal(" + 2\n * 3\n ^ 2\n"))
+    }
+
+    @Test
+    fun bodmasPowChainLeftAssoc() {
+        // (2^3)^2 = 64, NOT 2^(3^2) = 512.
+        assertAmount("64", bodmasTotal(" + 2\n ^ 3\n ^ 2\n"))
+    }
+
+    @Test
+    fun bodmasPowZeroResetsChainToOne() {
+        // x^0 = 1: the open chain becomes 1.
+        assertAmount("1", bodmasTotal(" + 5\n ^ 0\n"))
+    }
+
+    @Test
+    fun bodmasPowOneKeepsValue() {
+        assertAmount("7", bodmasTotal(" + 7\n ^ 1\n"))
+    }
+
+    @Test
+    fun bodmasNegativeBaseEvenPow() {
+        assertAmount("4", bodmasTotal(" - 2\n ^ 2\n"))
+    }
+
+    @Test
+    fun bodmasNegativeBaseOddPow() {
+        assertAmount("-8", bodmasTotal(" - 2\n ^ 3\n"))
+    }
+
+    @Test
+    fun bodmasMultiplyByNegative() {
+        assertAmount("-10", bodmasTotal(" + 5\n * -2\n"))
+    }
+
+    @Test
+    fun bodmasDivideByNegative() {
+        assertAmount("-25", bodmasTotal(" + 100\n / -4\n"))
+    }
+
+    @Test
+    fun bodmasLeadingNegativeLine() {
+        assertAmount("-15", bodmasTotal(" - 25\n + 10\n"))
+    }
+
+    @Test
+    fun bodmasZeroKillsChainButNotTape() {
+        // (5*0) + 3 = 3: zeroed chain, later lines still count.
+        assertAmount("3", bodmasTotal(" + 5\n * 0\n + 3\n"))
+    }
+
+    @Test
+    fun bodmasTenthsAreExact() {
+        // BigDecimal: 0.1 + 0.2 = 0.3 exactly (no binary-float drift).
+        assertAmount("0.3", bodmasTotal(" + 0.1\n + 0.2\n"))
+    }
+
+    @Test
+    fun bodmasMoneyCentsExact() {
+        assertAmount("59.97", bodmasTotal(" + 19.99\n * 3\n"))
+    }
+
+    @Test
+    fun bodmasThirdStaysPrecise() {
+        // 1/3 kept at 34-digit precision: *3 drifts less than 1e-30.
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 1\n / 3\n").lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        val drift = BigDecimal.ONE.subtract(eval.grandTotal.multiply(BigDecimal(3))).abs()
+        assertTrue(drift.compareTo(BigDecimal("0.000000000000000000000000000001")) < 0)
+    }
+
+    @Test
+    fun bodmasPercentAfterMultRun() {
+        // (200*2) + 10% of 400 = 440.
+        assertAmount("440", bodmasTotal(" + 200\n * 2\n + 10%\n"))
+    }
+
+    @Test
+    fun bodmasDiscountThenTax() {
+        // 100 - 10% (=90) + 5% of 90 (=4.5) = 94.5.
+        assertAmount("94.5", bodmasTotal(" + 100\n - 10%\n + 5%\n"))
+    }
+
+    @Test
+    fun bodmasPrecedenceOnChainedBase() {
+        // After a 150 subtotal: 150 + (10*2) = 170, NOT (150+10)*2 = 320.
+        assertAmount("170", bodmasTotal(" + 150\n------------------\n + 150\n + 10\n * 2\n"))
+    }
+
+    @Test
+    fun bodmasLeadingMultOnChainedBase() {
+        // After a 150 subtotal, `* 2` chains: 150 * 2 = 300.
+        assertAmount("300", bodmasTotal(" + 150\n------------------\n + 150\n * 2\n"))
+    }
+
+    @Test
+    fun bodmasEqualsCapturesMultSubtotal() {
+        // `=` banks the bound chain: subtotal 6, then +4 → grand 10.
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 2\n * 3\n=\n + 4\n").lines, 2)
+        assertEquals(1, eval.subtotals.size)
+        assertAmount("6", eval.subtotals[0])
+        assertAmount("10", eval.grandTotal)
+    }
+
+    @Test
+    fun bodmasSectionsAreIndependent() {
+        // Blank resets the chain: 2*3=6 and 10*5=50 stay separate.
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 2\n * 3\n\n + 10\n * 5").lines, 2)
+        assertEquals(2, eval.sectionTotals.size)
+        assertAmount("6", eval.sectionTotals[0])
+        assertAmount("50", eval.sectionTotals[1])
+        assertAmount("56", eval.grandTotal)
+    }
+
+    @Test
+    fun bodmasDivZeroFirstLineIsError() {
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" / 0\n").lines, 2)
+        assertTrue(eval.errors.any { it.contains("division by zero") })
+        assertAmount("0", eval.grandTotal)
+    }
+
+    @Test
+    fun bodmasHugeExponentKeepsTotal() {
+        // Rejected power records an error; the open chain (2) is kept.
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 2\n ^ 1001\n").lines, 2)
+        assertTrue(eval.errors.any { it.contains("exponent too large") })
+        assertAmount("2", eval.grandTotal)
+    }
+
+    @Test
+    fun bodmasProseAfterOpIsSilentZero() {
+        // `+ abc`: no number to take — neutral 0 with the text as comment.
+        val doc = CalcFile.parse(" + 10\n + abc\n + 5\n")
+        val eval = TapeEvaluator.evaluate(doc.lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertAmount("15", eval.grandTotal)
+    }
+
+    @Test
+    fun bodmasBracketsStayOutOfMath() {
+        // Brackets are NOT calculated: hint shown, total untouched.
+        val doc = CalcFile.parse("(2 + 3) * 4\n")
+        assertTrue(doc.warnings.any { it.contains("brackets") })
+        val eval = TapeEvaluator.evaluate(doc.lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertAmount("0", eval.grandTotal)
+    }
 }
