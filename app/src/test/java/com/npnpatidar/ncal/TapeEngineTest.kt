@@ -1500,4 +1500,35 @@ VARINFO=
         // A genuine new line after the total row counts normally.
         assertAmount("120", bodmasTotal(" + 100\n------------------\n + 100\n + 20\n"))
     }
+
+    // ---------- scroll gate: mid-tape edits keep their place ----------
+
+    @Test
+    fun caretOnLastLineEnd() {
+        assertTrue(TapeEdit.caretOnLastLine("aaa\nbbb\nccc", 11))
+    }
+
+    @Test
+    fun caretOnLastLineEmptyFinalLine() {
+        // Caret parked on the fresh line after a trailing newline.
+        assertTrue(TapeEdit.caretOnLastLine("aaa\nbbb\n", 8))
+    }
+
+    @Test
+    fun caretMidTapeNoFollow() {
+        // Editing line 2 of 3: the view must stay put.
+        assertFalse(TapeEdit.caretOnLastLine("aaa\nbbb\nccc", 5))
+        assertFalse(TapeEdit.caretOnLastLine("aaa\nbbb\nccc", 0))
+    }
+
+    @Test
+    fun caretSingleLineAlwaysFollows() {
+        assertTrue(TapeEdit.caretOnLastLine("abc", 1))
+    }
+
+    @Test
+    fun caretClampedInside() {
+        assertTrue(TapeEdit.caretOnLastLine("aaa\nbbb", 99))
+        assertFalse(TapeEdit.caretOnLastLine("aaa\nbbb", -5))
+    }
 }

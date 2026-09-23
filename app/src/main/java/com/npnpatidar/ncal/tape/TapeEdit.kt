@@ -98,4 +98,11 @@ object TapeEdit {
         if (t.endsWith("\n\n")) return text
         return "$t\n\n"
     }
+
+    /** Auto-scroll gate: the tape follows typing only while the caret sits
+     *  on the last line — edits anywhere else must never yank the view down. */
+    fun caretOnLastLine(text: String, caret: Int): Boolean {
+        val c = caret.coerceIn(0, text.length)
+        return c > text.lastIndexOf('\n')
+    }
 }

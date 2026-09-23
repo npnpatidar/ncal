@@ -109,6 +109,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.npnpatidar.ncal.settings.ThemeMode
 import com.npnpatidar.ncal.storage.NotesRepository
+import com.npnpatidar.ncal.tape.TapeEdit
 import kotlinx.coroutines.launch
 
 /**
@@ -317,10 +318,14 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                         backgroundColor = LocalTextSelectionColors.current.backgroundColor,
                     )
                     // Outer scroll state: text and cursor scroll as one unit.
-                    // Fresh per note; follows typing in CALC, free elsewhere.
+                    // Fresh per note; follows typing in CALC only while the
+                    // caret is on the last line — mid-tape edits never yank
+                    // the view to the bottom.
                     val listScroll = remember(state.noteId) { ScrollState(0) }
                     LaunchedEffect(state.tapeText, state.keypadMode) {
-                        if (state.keypadMode == KeypadMode.CALC) {
+                        if (state.keypadMode == KeypadMode.CALC &&
+                            TapeEdit.caretOnLastLine(state.tapeText, state.tapeSel.end)
+                        ) {
                             listScroll.scrollTo(listScroll.maxValue)
                         }
                     }
