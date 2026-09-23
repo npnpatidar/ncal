@@ -11,6 +11,7 @@ import com.npnpatidar.ncal.settings.SettingsStore
 import com.npnpatidar.ncal.storage.NotesRepository
 import com.npnpatidar.ncal.tape.CalcFile
 import com.npnpatidar.ncal.tape.CalcMeta
+import com.npnpatidar.ncal.tape.TapeEdit
 import com.npnpatidar.ncal.tape.TapeEvaluator
 import com.npnpatidar.ncal.tape.TapeFormatter
 import com.npnpatidar.ncal.tape.TapeLine
