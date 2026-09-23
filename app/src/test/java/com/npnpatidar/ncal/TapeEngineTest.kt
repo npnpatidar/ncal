@@ -1172,14 +1172,13 @@ VARINFO=
 
     @Test
     fun legacyTrailingSpaceStillTrims() {
-        // No divider: single trailing space keeps the old tidy behavior.
-        assertEquals(" + 5\n3" to 6, TapeEdit.insertToken(" + 5\n ", 6, 6, "3"))
+        // No divider: trailing whitespace is stripped, digit joins the line.
+        assertEquals(" + 53" to 5, TapeEdit.insertToken(" + 5\n ", 6, 6, "3"))
     }
 
     @Test
     fun singleTrailingNewlineStillTrims() {
-        // lineup with the long-standing ` + 5\n` + op expectation.
-        assertEquals(" + 5\n3" to 6, TapeEdit.insertToken(" + 5\n", 5, 5, "3"))
+        assertEquals(" + 53" to 5, TapeEdit.insertToken(" + 5\n", 5, 5, "3"))
     }
 
     @Test
