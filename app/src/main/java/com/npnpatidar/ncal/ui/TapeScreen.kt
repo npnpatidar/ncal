@@ -83,6 +83,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
@@ -111,6 +112,7 @@ import com.npnpatidar.ncal.settings.ThemeMode
 import com.npnpatidar.ncal.storage.NotesRepository
 import com.npnpatidar.ncal.tape.TapeEdit
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Notepad calculator:
@@ -351,6 +353,12 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                                     getFont = { latestFont },
                                     onZoom = { vm.previewTapeFont(it) },
                                     onEnd = { vm.commitSettings() },
+                                )
+                                .cursorDragFollow(
+                                    enabled = !systemMode,
+                                    view = LocalView.current,
+                                    getLayout = { textLayout },
+                                    onCursor = vm::placeCursor,
                                 ),
                             readOnly = state.keypadMode != KeypadMode.SYSTEM,
                             textStyle = MaterialTheme.typography.bodyLarge.copy(
@@ -639,6 +647,65 @@ private fun Modifier.pinchZoom(
                 onEnd()
                 break
             }
+        }
+    }
+}
+
+/**
+ * Press-hold-drag moves the hand-drawn cursor with the finger: tap still
+ * jumps, a quick drag still scrolls, pinch still zooms.
+ * - Down passes through untouched, so the tap/slop race is unchanged.
+ * - Finger held still past long-press timeout → cursor mode (haptic tick);
+ *   further moves set the caret from the text layout and are consumed so
+ *   scroll and selection don't fight them.
+ * - Finger moving past slop first, lifting early, or a second finger
+ *   landing → back off entirely (scroll/selection/zoom proceed as before).
+ * Never restarts mid-gesture (Unit key); disabled in ABC/system mode where
+ * the native keyboard and handles own the finger.
+ */
+private fun Modifier.cursorDragFollow(
+    enabled: Boolean,
+    view: android.view.View,
+    getLayout: () -> TextLayoutResult?,
+    onCursor: (Int) -> Unit,
+): Modifier = pointerInput(enabled) {
+    if (!enabled) return@pointerInput
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        // Race slop-breakthrough (scroll) against holding still (cursor).
+        // null = held past the timeout; true = moved (scroll); false = bailed.
+        val moved = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+            while (true) {
+                val ev = awaitPointerEvent(PointerEventPass.Initial)
+                if (ev.changes.all { !it.pressed }) return@withTimeoutOrNull false
+                if (ev.changes.count { it.pressed } > 1) return@withTimeoutOrNull false
+                val pastSlop = ev.changes.any {
+                    it.pressed && (it.position - down.position).getDistance() > viewConfiguration.touchSlop
+                }
+                if (pastSlop) return@withTimeoutOrNull true
+            }
+            @Suppress("UNREACHABLE_CODE")
+            false
+        }
+        if (moved != null) return@awaitEachGesture
+        try {
+            view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+        } catch (_: Throwable) {
+        }
+        while (true) {
+            val ev = awaitPointerEvent(PointerEventPass.Initial)
+            val pressed = ev.changes.filter { it.pressed }
+            if (pressed.isEmpty() || pressed.size > 1) break
+            val off = try {
+                getLayout()?.getOffsetForPosition(pressed[0].position)
+            } catch (_: Throwable) {
+                null
+            }
+            if (off != null) {
+                onCursor(off)
+                pressed.forEach { it.consume() }
+            }
+            if (ev.changes.all { !it.pressed }) break
         }
     }
 }

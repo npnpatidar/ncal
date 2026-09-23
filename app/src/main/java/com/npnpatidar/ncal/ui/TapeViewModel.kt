@@ -307,6 +307,15 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         scheduleSave()
     }
 
+    /** Finger placed or dragged the cursor (tap / press-hold-drag):
+     * selection only — no text change, no undo entry, no save. */
+    fun placeCursor(offset: Int) {
+        val s = _state.value
+        val c = offset.coerceIn(0, s.tapeText.length)
+        if (s.tapeSel.start == c && s.tapeSel.end == c) return
+        _state.update { it.copy(tapeSel = TextRange(c)) }
+    }
+
     /** Keypad press: inserts at the cursor (replacing any selection), so
      * mid-tape edits land where the cursor is. Operator-on-bare-line
      * extension, end-trimming and caret rules live in [TapeEdit] (unit-tested).
