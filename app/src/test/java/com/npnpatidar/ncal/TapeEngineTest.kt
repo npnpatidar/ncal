@@ -1141,4 +1141,21 @@ VARINFO=
         assertEquals(1, eval.sectionTotals.size)
         assertAmount("12", eval.sectionTotals[0])
     }
+
+    @Test
+    fun freshSectionAppendsBlankLine() {
+        assertEquals(" + 1\n\n", TapeEdit.openFreshSection(" + 1"))
+        assertEquals(" + 1\n\n", TapeEdit.openFreshSection(" + 1\n"))
+    }
+
+    @Test
+    fun freshSectionIsIdempotent() {
+        // Already on a fresh section: returned unchanged (repeat `=` = no-op).
+        assertEquals(" + 1\n\n", TapeEdit.openFreshSection(" + 1\n\n"))
+    }
+
+    @Test
+    fun freshSectionCollapsesExtraBlanks() {
+        assertEquals(" + 1\n\n", TapeEdit.openFreshSection(" + 1\n\n\n"))
+    }
 }

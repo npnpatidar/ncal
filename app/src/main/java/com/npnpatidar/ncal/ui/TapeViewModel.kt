@@ -367,7 +367,7 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
                     return
                 }
                 pushUndo(_state.value.tapeText)
-                val next = "$cur\n"
+                val next = TapeEdit.openFreshSection(cur)
                 _state.update { it.copy(tapeText = next, tapeSel = TextRange(next.length)) }
                 NcalLogger.i("Tape", "equals: new section after closed block")
                 reevaluate("new-section")
@@ -383,12 +383,12 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         val eval = TapeEvaluator.evaluate(doc.lines, decimals)
         val bal = CalcFile.formatEntry('+', eval.openTotal, false, "", doc.meta.copy(decimals = decimals))
         val s = _state.value.settings
-        val next = TapeFormatter.pretty(
+        val next = TapeEdit.openFreshSection(TapeFormatter.pretty(
             "$cur\n${CalcFile.SEPARATOR}\n$bal",
             decimals,
             s.indent,
             s.grouping,
-        )
+        ))
         _state.update { it.copy(tapeText = next, tapeSel = TextRange(next.length)) }
         NcalLogger.i("Tape", "equals total=${eval.openTotal} subs=${eval.subtotals.size}")
         NcalLogger.d("Tape", "equals after: ${snapshot(next)}")

@@ -66,4 +66,12 @@ object TapeEdit {
         val next = text.trimEnd().dropLast(1)
         return next to next.length
     }
+
+    /** `=` as Enter: ensure the note ends with exactly one blank line, so the
+     *  next entry starts a fresh calculation section. Idempotent. */
+    fun openFreshSection(text: String): String {
+        val t = text.trimEnd()
+        if (t.endsWith("\n\n")) return text
+        return "$t\n\n"
+    }
 }
