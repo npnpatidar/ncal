@@ -936,7 +936,8 @@ VARINFO=
 
     @Test
     fun deleteBeforeCursor() {
-        assertEquals(" + 134" to 3, TapeEdit.deleteAt(" + 1234", 4, 4))
+        // Cursor after '2' (offset 5) deletes '2'.
+        assertEquals(" + 134" to 4, TapeEdit.deleteAt(" + 1234", 5, 5))
     }
 
     @Test
@@ -958,7 +959,7 @@ VARINFO=
     @Test
     fun deleteTrailingNewlineJoins() {
         // Cursor after trailing newline: removes the newline (standard).
-        assertEquals(" + 5" to 5, TapeEdit.deleteAt(" + 5\n", 6, 6))
+        assertEquals(" + 5" to 4, TapeEdit.deleteAt(" + 5\n", 6, 6))
     }
 
     @Test
@@ -1115,7 +1116,7 @@ VARINFO=
 
     @Test
     fun threeSections() {
-        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 1\n\n + 2\n\n + 3\n").lines, 2)
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 1\n\n + 2\n\n + 3").lines, 2)
         assertEquals(listOf("1", "2", "3"),
             eval.sectionTotals.map { it.stripTrailingZeros().toPlainString() })
         assertAmount("6", eval.grandTotal)
