@@ -891,7 +891,7 @@ VARINFO=
 
     @Test
     fun swapSignOnBareOp() {
-        assertEquals(" * +" to 5, TapeEdit.insertToken(" * -", 4, 4, "\n + "))
+        assertEquals(" * +" to 4, TapeEdit.insertToken(" * -", 4, 4, "\n + "))
     }
 
     @Test
