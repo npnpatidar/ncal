@@ -1392,8 +1392,10 @@ VARINFO=
 
     @Test
     fun bodmasEqualsCapturesMultSubtotal() {
-        // `=` banks the bound chain: subtotal 6, then +4 → grand 10.
-        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 2\n * 3\n=\n + 4\n").lines, 2)
+        // Genuine post-`=` shape: dashes, restated 6, then a fresh +4 line
+        // AFTER the total row (fresh input never sits directly under the
+        // dashes — the keypad always creates its own line): grand 10.
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 2\n * 3\n------------------\n + 6\n + 4\n").lines, 2)
         assertEquals(1, eval.subtotals.size)
         assertAmount("6", eval.subtotals[0])
         assertAmount("10", eval.grandTotal)
