@@ -28,9 +28,9 @@ sealed interface TapeLine {
     data object Separator : TapeLine
 
     /** Post-separator restatement (`+ <total>` or `- <total>` plus optional
-     * comment). Display-only for math when it matches the running total (the
-     * value is recomputed); a mismatching one is fresh user input. Either way
-     * the [comment] is user content and is preserved verbatim through
+     * comment). Always display-only: the evaluator snaps it to the recomputed
+     * running total and never adds it, so stale mid-edit values heal. The
+     * [comment] is user content and is preserved verbatim through
      * pretty-print, save and export. */
     data class Balance(val value: BigDecimal, val comment: String = "") : TapeLine
 

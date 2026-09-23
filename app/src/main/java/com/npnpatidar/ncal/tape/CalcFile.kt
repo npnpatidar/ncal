@@ -138,9 +138,9 @@ object CalcFile {
         }
 
         // Post-pass: `+X`/`-X` directly after a separator is a balance
-        // restatement (kept signed, comment included). The evaluator skips it
-        // when it matches the running total, counts it as fresh input when it
-        // doesn't — either way the display snaps to the running total.
+        // restatement (kept signed, comment included). The evaluator always
+        // treats it as display-only and snaps it to the recomputed running
+        // total — stale mid-edit values heal instead of inflating.
         val fixed = lines.mapIndexed { i, l ->
             if (l is TapeLine.Entry && (l.op == '+' || l.op == '-') && !l.isPercent &&
                 i > 0 && lines[i - 1] is TapeLine.Separator

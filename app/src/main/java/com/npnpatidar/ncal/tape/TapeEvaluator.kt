@@ -36,7 +36,9 @@ data class EvalResult(
  * - Entries accumulate into a running total; `* / ^` bind tighter than `+ -`
  *   across lines (`+10, +2, *3` = 16).
  * - `%` resolves against the running subtotal (base + current block so far).
- * - [TapeLine.Balance] lines are display-only restatements (verified, never added).
+ * - [TapeLine.Balance] lines are computed restatements: always display-only
+ *   and snapped to the running total, never added (stale ones heal instead
+ *   of inflating).
  * - [TapeLine.Blank] ends the section: the section total feeds the grand total and
  *   the running total resets (independent calculation, like CalcTape).
  * - Internally full BigDecimal precision (34-digit context); rounding to
@@ -78,20 +80,16 @@ object TapeEvaluator {
                 }
                 is TapeLine.Balance -> {
                     flushBlock()
-                    // A post-separator `+X` matching the running total is a
-                    // computed restatement (display-only). A mismatching one
-                    // is fresh user input typed right after the separator, so
-                    // it counts as a normal `+X` entry. Either way the display
-                    // snaps to the running total (see balanceTotals).
+                    // A `+X`/`-X` directly after a separator is a computed
+                    // restatement: ALWAYS display-only, never added — even
+                    // when stale (mid-edit). The shown value snaps to the
+                    // running total (balanceTotals) and patchBalances/pretty
+                    // rewrite the text, so editing an entry glides the total
+                    // instead of exploding it by re-adding old subtotals.
+                    // (Fresh input always arrives on its own Entry line:
+                    // the keypad never types onto the total row.)
                     balanceTotals[index] = running
-                    if (line.value.setScale(decimals, RoundingMode.HALF_UP)
-                            .compareTo(running.setScale(decimals, RoundingMode.HALF_UP)) == 0
-                    ) {
-                        results.add(LineResult(index, running, null))
-                    } else {
-                        running = running.add(line.value, MC)
-                        results.add(LineResult(index, line.value, null))
-                    }
+                    results.add(LineResult(index, running, null))
                 }
                 is TapeLine.Blank -> {
                     flushBlock()

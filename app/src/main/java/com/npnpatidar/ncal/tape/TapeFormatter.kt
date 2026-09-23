@@ -29,23 +29,26 @@ object TapeFormatter {
         grouping: Grouping = Grouping.OFF,
     ): String {
         val doc = CalcFile.parse(tapeText)
+        // Snap balances to recomputed running totals: `=` (and any reformat)
+        // must never cement a stale mid-edit value into the file.
+        val eval = TapeEvaluator.evaluate(doc.lines, decimals)
         val gap = " ".repeat(indent.coerceIn(1, 8))
         fun num(v: java.math.BigDecimal, pct: Boolean): String =
             formatNum(v, decimals, pct, grouping)
-        val width = doc.lines.mapNotNull {
-            when (it) {
+        val width = doc.lines.mapIndexedNotNull { i, line ->
+            when (line) {
                 is TapeLine.Entry -> {
-                    val (_, abs) = displayParts(it.op, it.amount)
-                    num(abs, it.isPercent).length
+                    val (_, abs) = displayParts(line.op, line.amount)
+                    num(abs, line.isPercent).length
                 }
                 is TapeLine.Balance -> {
-                    val (_, abs) = displayParts('+', it.value)
+                    val (_, abs) = displayParts('+', eval.balanceTotals[i] ?: line.value)
                     num(abs, false).length
                 }
                 else -> null
             }
         }.maxOrNull()?.coerceAtLeast(1) ?: 0
-        val out = doc.lines.map { line ->
+        val out = doc.lines.mapIndexed { i, line ->
             when (line) {
                 is TapeLine.Entry -> {
                     val (op, abs) = displayParts(line.op, line.amount)
@@ -54,7 +57,7 @@ object TapeFormatter {
                     else "$op $n".trimEnd()
                 }
                 is TapeLine.Balance -> {
-                    val (op, abs) = displayParts('+', line.value)
+                    val (op, abs) = displayParts('+', eval.balanceTotals[i] ?: line.value)
                     val n = num(abs, false).padEnd(width)
                     if (line.comment.isNotBlank()) "$op $n$gap${line.comment}"
                     else "$op $n".trimEnd()

@@ -276,9 +276,10 @@ VARINFO=
         val eval = TapeEvaluator.evaluate(doc.lines, 2)
         assertTrue(eval.errors.isEmpty())
         assertEquals(listOf(BigDecimal("5.00")), eval.subtotals.map { it.setScale(2) })
-        // `+ 3` after the separator mismatches the running total, so it is
-        // fresh input (a normal entry), not a restatement: grand becomes 8.
-        assertEquals(BigDecimal("8.00"), eval.grandTotal.setScale(2))
+        // `+ 3` after the separator is a restatement row, never fresh input:
+        // it snaps to the running total, so grand stays 5. Stale values can
+        // never inflate the total (see the hisab 45→50 regression tests).
+        assertEquals(BigDecimal("5.00"), eval.grandTotal.setScale(2))
     }
 
     @Test
@@ -1440,5 +1441,61 @@ VARINFO=
         val eval = TapeEvaluator.evaluate(doc.lines, 2)
         assertTrue(eval.errors.isEmpty())
         assertAmount("0", eval.grandTotal)
+    }
+
+    // ---------- stale balances heal (hisab 45→50 regression) ----------
+    //
+    // Real-world failure: editing 45→50 mid-note exploded the total past
+    // 150,000 on every keystroke (log: 555 → 14520 → … → 155370), because
+    // stale subtotal rows were re-added as fresh input — and `=` cemented
+    // whichever inflated value was live (a 256−8 block saved as 919).
+    // Subtotal rows are now always recomputed restatements, never added.
+
+    @Test
+    fun staleBalanceAfterEditNeverAdds() {
+        // 45-world subtotal left behind after the entry became 50: ignored.
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 50\n + 10\n------------------\n + 55\n").lines, 2)
+        assertTrue(eval.errors.isEmpty())
+        assertAmount("60", eval.grandTotal)
+    }
+
+    @Test
+    fun editedNoteKeepsTrueTotals() {
+        // hisab (2).calc shape: 0-world entries under committed balances.
+        // True chain: 0+119+292+0=411, −155→256, −8→248 (file said 919).
+        val tape = " + 0\n + 119\n + 292\n + 0\n------------------\n + 411\n" +
+            " - 155\n------------------\n + 256\n - 8\n------------------\n + 919\n"
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(tape).lines, 2)
+        assertEquals(
+            listOf("411", "256", "248"),
+            eval.subtotals.map { it.setScale(0).toPlainString() },
+        )
+        assertAmount("248", eval.grandTotal)
+        assertAmount("248", eval.balanceTotals[11] ?: BigDecimal(-1))
+    }
+
+    @Test
+    fun midEditTotalsGlideDontSpike() {
+        // Same calculation at three edit states (45 → 0 → 50) with the
+        // originally committed balances: true values throughout, no spike.
+        val balances = "\n------------------\n + 456\n - 155\n------------------\n + 301\n - 8\n------------------\n + 293\n"
+        assertAmount("293", bodmasTotal(" + 45\n + 119\n + 292\n + 0$balances"))
+        assertAmount("248", bodmasTotal(" + 0\n + 119\n + 292\n + 0$balances"))
+        assertAmount("298", bodmasTotal(" + 50\n + 119\n + 292\n + 0$balances"))
+    }
+
+    @Test
+    fun prettyRecomputesStaleBalances() {
+        // `=` (pretty) writes the recomputed total, never cements stale text.
+        val out = TapeFormatter.pretty(" + 50\n + 10\n------------------\n + 55\n", 2)
+        assertTrue("out=$out", out.contains("+ 60.00"))
+        assertFalse("out=$out", out.contains("55"))
+        assertAmount("60", bodmasTotal(out))
+    }
+
+    @Test
+    fun typedEntryAfterBalanceRowStillAdds() {
+        // A genuine new line after the total row counts normally.
+        assertAmount("120", bodmasTotal(" + 100\n------------------\n + 100\n + 20\n"))
     }
 }
