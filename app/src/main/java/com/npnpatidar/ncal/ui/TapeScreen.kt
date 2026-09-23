@@ -13,6 +13,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.LocalTextToolbar
+import androidx.compose.foundation.text.TextToolbar
+import androidx.compose.foundation.text.TextToolbarStatus
 import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.verticalScroll
@@ -90,6 +93,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -419,7 +423,9 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                                     tapeField()
                                 } else {
                                     CompositionLocalProvider(LocalTextInputService provides null) {
-                                        tapeField()
+                                        CompositionLocalProvider(LocalTextToolbar provides NoTextToolbar) {
+                                            tapeField()
+                                        }
                                     }
                                 }
                             }
@@ -600,6 +606,22 @@ private fun BottomPinnedControls(vm: TapeViewModel, state: TapeUiState) {
                     }
                 }
             }
+/**
+ * CALC mode has its own cursor and keypad: the native floating menu
+ * (Select all / Copy / Paste) must never pop up — press-hold is
+ * cursor-follow, not a menu request. ABC/system mode keeps the native one.
+ */
+private object NoTextToolbar : TextToolbar {
+    override val status: TextToolbarStatus = TextToolbarStatus.Hidden
+    override fun showMenu(
+        rect: Rect,
+        onCopyRequested: (() -> Unit)?,
+        onCutRequested: (() -> Unit)?,
+        onPasteRequested: (() -> Unit)?,
+        onSelectAllRequested: (() -> Unit)?,
+    ) = Unit
+    override fun hide() = Unit
+}
 /**
  * Pinch-to-zoom (two-finger spread) for the notepad, like image zoom.
  * Anchor-based: when the second finger lands we record the finger distance
