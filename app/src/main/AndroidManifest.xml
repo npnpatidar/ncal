@@ -1,12 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
-    <!-- No storage permission needed: the app writes only its own files under
-         Download/ncal via MediaStore (scoped storage, Android 10+).
-         Reading a user-picked .calc uses the system file picker (no permission). -->
     <application
-        android:allowBackup="true"
-        android:icon="@android:mipmap/sym_def_app_icon"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="ncal"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.NoActionBar">
@@ -19,5 +18,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

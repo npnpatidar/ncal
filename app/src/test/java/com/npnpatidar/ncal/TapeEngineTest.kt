@@ -1,8 +1,10 @@
 package com.npnpatidar.ncal
 
+import com.npnpatidar.ncal.export.CalcExport
 import com.npnpatidar.ncal.tape.CalcFile
 import com.npnpatidar.ncal.tape.CalcMeta
 import com.npnpatidar.ncal.tape.Grouping
+import com.npnpatidar.ncal.tape.TapeLimits
 import com.npnpatidar.ncal.tape.TapeEvaluator
 import com.npnpatidar.ncal.tape.TapeFormatter
 import com.npnpatidar.ncal.tape.TapeLine
@@ -137,7 +139,7 @@ VARINFO=
     fun roundTripPreservesBody() {
         val doc = CalcFile.parse(LEDGER)
         val eval = TapeEvaluator.evaluate(doc.lines, doc.meta.decimals)
-        val out = CalcFile.write(doc, eval.subtotals)
+        val out = CalcFile.write(doc, eval.balanceTotals)
         // Body (everything after the header) must be byte-identical.
         val bodyOf = { t: String -> t.substringAfter("</SFRCalculatorHeader>\n") }
         assertEquals(bodyOf(LEDGER), bodyOf(out))
@@ -147,10 +149,10 @@ VARINFO=
     fun exportIsIdempotent() {
         val doc = CalcFile.parse(LEDGER)
         val eval = TapeEvaluator.evaluate(doc.lines, doc.meta.decimals)
-        val once = CalcFile.write(doc, eval.subtotals)
+        val once = CalcFile.write(doc, eval.balanceTotals)
         val doc2 = CalcFile.parse(once)
         val eval2 = TapeEvaluator.evaluate(doc2.lines, doc2.meta.decimals)
-        assertEquals(once, CalcFile.write(doc2, eval2.subtotals))
+        assertEquals(once, CalcFile.write(doc2, eval2.balanceTotals))
     }
 
     @Test
@@ -266,7 +268,7 @@ VARINFO=
         assertEquals(BigDecimal("10.00"), eval.grandTotal.setScale(2))
         // Canonical export keeps it too (re-parsed without a header, so the
         // default 5 decimals apply).
-        val out = CalcFile.write(doc, eval.subtotals)
+        val out = CalcFile.write(doc, eval.balanceTotals)
         assertTrue(out.contains("10.00000 kept"))
     }
 
@@ -596,6 +598,7 @@ VARINFO=
     fun headerBadDecimalsDefaults5() {
         val text = "<SFRCalculatorHeader>\nDECIMALS=abc\n</SFRCalculatorHeader>\n + 1\n"
         assertEquals(5, CalcFile.parse(text).meta.decimals)
+        assertFalse(CalcFile.hasHeader(text))
     }
 
     @Test
@@ -623,6 +626,26 @@ VARINFO=
     }
 
     @Test
+    fun oneSeparatorHeaderIsRejected() {
+        val text = "<SFRCalculatorHeader>\nDECIMALS=2\nDECSEP=,\n</SFRCalculatorHeader>\n + 1\n"
+        assertFalse(CalcFile.hasHeader(text))
+        assertTrue(CalcFile.parse(text).warnings.any { it.contains("header metadata") })
+    }
+
+    @Test
+    fun dateTimeAndUnmatchedFormulaRemainComments() {
+        val dateTime = CalcFile.parse("2026-09-24T18:30:00Z\n").lines.first()
+        assertTrue(dateTime is TapeLine.Comment)
+        val formula = CalcFile.parse("2*(3+4\n").lines.first()
+        assertTrue(formula is TapeLine.Comment)
+    }
+
+    @Test
+    fun malformedGroupingRemainsComment() {
+        assertTrue(CalcFile.parse("1,234,56\n").lines.first() is TapeLine.Comment)
+    }
+
+    @Test
     fun crlfHandled() {
         val eval = TapeEvaluator.evaluate(CalcFile.parse("+ 5\r\n+ 6\r\n").lines, 2)
         assertAmount("11", eval.grandTotal)
@@ -633,7 +656,7 @@ VARINFO=
     @Test
     fun headerOrderExact() {
         val m = CalcMeta(decimals = 5, decSep = '.', thouSep = ',', uuid = "U", caretLine = 3, caretOffset = 4)
-        val out = CalcFile.write(TapeDoc(m, emptyList()), emptyList())
+        val out = CalcFile.write(TapeDoc(m, emptyList()), emptyMap())
         assertEquals(
             listOf(
                 "<SFRCalculatorHeader>", "CARETLINE=3", "CARETLINEOFFSET=4", "CFGVER=1",
@@ -655,12 +678,12 @@ VARINFO=
                 TapeLine.Balance(BigDecimal("9"), ""),
             ),
         )
-        assertTrue(CalcFile.write(doc, emptyList()).contains("9.00000"))
+        assertTrue(CalcFile.write(doc, emptyMap()).contains("9.00000"))
     }
 
     @Test
     fun blankMiddlePreserved() {
-        val out = CalcFile.write(CalcFile.parse(" + 5\n\n + 7\n").copy(), listOf())
+        val out = CalcFile.write(CalcFile.parse(" + 5\n\n + 7\n").copy(), emptyMap())
         assertTrue(out.split("\n").contains(""))
     }
 
@@ -669,7 +692,7 @@ VARINFO=
         val m = CalcMeta(decimals = 2, decSep = ',', thouSep = '.', uuid = "G")
         val out = CalcFile.write(
             TapeDoc(m, listOf(TapeLine.Entry('+', BigDecimal("1234.56"), false, ""))),
-            emptyList(),
+            emptyMap(),
         )
         assertTrue(out.contains("1234,56"))
         val back = CalcFile.parse(out)
@@ -766,9 +789,8 @@ VARINFO=
     }
 
     @Test
-    fun whitespaceOnlyLineIsComment() {
-        // Not empty (has spaces) so not Blank — but harmless either way.
-        assertTrue(CalcFile.parse("   \n + 5\n").lines.first() is TapeLine.Comment)
+    fun whitespaceOnlyLineIsBlank() {
+        assertTrue(CalcFile.parse("   \n + 5\n").lines.first() is TapeLine.Blank)
     }
 
     @Test
@@ -1530,5 +1552,323 @@ VARINFO=
     fun caretClampedInside() {
         assertTrue(TapeEdit.caretOnLastLine("aaa\nbbb", 99))
         assertFalse(TapeEdit.caretOnLastLine("aaa\nbbb", -5))
+    }
+
+    @Test
+    fun leadingMultiplyChainUsesRunningTarget() {
+        assertAmount("600", bodmasTotal(" + 100\n------------------\n + 100\n * 2\n * 3\n"))
+    }
+
+    @Test
+    fun leadingDivideAndPowerChainsUseRunningTarget() {
+        assertAmount("50", bodmasTotal(" + 100\n------------------\n + 100\n / 2\n / 1\n"))
+        assertAmount("1000000000000", bodmasTotal(" + 100\n------------------\n + 100\n ^ 2\n ^ 3\n"))
+    }
+
+    @Test
+    fun extremeScientificInputIsRejectedWithoutExpansion() {
+        val doc = CalcFile.parse(" + 1e100000000\n")
+        assertTrue(doc.warnings.any { it.contains("limits") })
+        assertTrue(doc.lines.none { it is TapeLine.Entry })
+    }
+
+    @Test
+    fun extremeHeaderPrecisionFallsBackToDefault() {
+        val text = "<SFRCalculatorHeader>\nDECIMALS=100000000\n</SFRCalculatorHeader>\n + 1\n"
+        val doc = CalcFile.parse(text)
+        assertEquals(5, doc.meta.decimals)
+        assertFalse(CalcFile.hasHeader(text))
+    }
+
+    @Test
+    fun prettyAndWriterPreserveMoreDecimalSourcePrecision() {
+        val source = " + 0.005\n * 100\n"
+        val pretty = TapeFormatter.pretty(source, 2)
+        assertTrue(pretty.contains("0.005"))
+        val doc = CalcFile.parse(pretty)
+        val eval = TapeEvaluator.evaluate(doc.lines, 2)
+        assertAmount("0.5", eval.grandTotal)
+        val written = CalcFile.write(doc, eval.balanceTotals)
+        assertTrue(written.contains("0.005"))
+        assertAmount("0.5", TapeEvaluator.evaluate(CalcFile.parse(written).lines, 2).grandTotal)
+    }
+
+    @Test
+    fun writerUsesBalanceIndexRatherThanSeparatorIndex() {
+        val doc = CalcFile.parse(" + 10\n------------------\n\n + 20\n------------------\n + 20\n")
+        val eval = TapeEvaluator.evaluate(doc.lines, 2)
+        val out = CalcFile.write(doc, eval.balanceTotals)
+        val written = CalcFile.parse(out)
+        assertEquals(0, BigDecimal("20").compareTo(written.lines.filterIsInstance<TapeLine.Balance>().single().value))
+    }
+
+    @Test
+    fun ambiguousAndUnsupportedNumericLinesRemainComments() {
+        assertTrue(CalcFile.parse("0,123\n").lines.first() is TapeLine.Comment)
+        assertTrue(CalcFile.parse("2026-09-21\n").lines.first() is TapeLine.Comment)
+        assertTrue(CalcFile.parse("2*(3+4)\n").lines.first() is TapeLine.Comment)
+        assertTrue(CalcFile.parse(".5.6\n").lines.first() is TapeLine.Comment)
+    }
+
+    @Test
+    fun incompleteHeaderIsNotAHeader() {
+        val text = "<SFRCalculatorHeader>\nDECIMALS=2\n + 1\n"
+        assertFalse(CalcFile.hasHeader(text))
+        assertEquals(5, CalcFile.parse(text).meta.decimals)
+    }
+
+    @Test
+    fun exactNegativeAndLargeBoundaryPowers() {
+        val reciprocal = TapeEvaluator.evaluate(CalcFile.parse(" + 5\n ^ -1\n").lines, 3)
+        assertTrue(reciprocal.errors.isEmpty())
+        assertAmount("0.2", reciprocal.grandTotal)
+        val large = TapeEvaluator.evaluate(CalcFile.parse("1e400^-1\n").lines, 3)
+        assertTrue(large.errors.isEmpty())
+        assertAmount("1e-400", large.grandTotal)
+        val root = TapeEvaluator.evaluate(CalcFile.parse("1e400^0.5\n").lines, 3)
+        assertTrue(root.errors.isEmpty())
+        assertAmount("1e200", root.grandTotal)
+    }
+
+    @Test
+    fun lineResultsRemainInDocumentOrder() {
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 1\ncomment\n + 2").lines, 2)
+        assertEquals(listOf(0, 1, 2), eval.lineResults.map { it.index })
+    }
+
+    @Test
+    fun crOnlyInputAndCrLfPatchKeepLineStructure() {
+        assertAmount("11", TapeEvaluator.evaluate(CalcFile.parse("+ 5\r+ 6\r").lines, 2).grandTotal)
+        val raw = " + 100\r\n------------------\r\n + 0\r\n"
+        val doc = CalcFile.parse(raw)
+        val eval = TapeEvaluator.evaluate(doc.lines, 2)
+        val patched = TapeFormatter.patchBalances(raw, doc, eval, 2, 2, Grouping.OFF)
+        assertTrue(patched!!.contains("\r\n"))
+        assertFalse(patched.contains("\n\n"))
+    }
+
+    @Test
+    fun negativeZeroNormalizesToPlus() {
+        assertEquals("+ 0.00\n", TapeFormatter.pretty(" + -0.00\n", 2))
+        assertEquals(Pair('+', BigDecimal("0")), TapeFormatter.displayParts('-', BigDecimal("-0.00")))
+    }
+
+    @Test
+    fun fractionalPowersReduceAndHandleTinyAndZeroBases() {
+        val tiny = TapeEvaluator.evaluate(CalcFile.parse(" + 2e-10000\n ^ 0.5\n").lines, 8)
+        assertTrue(tiny.errors.isEmpty())
+        val expectedTiny = BigDecimal("1.414213562373095048801688724209698e-5000")
+        assertTrue(
+            tiny.grandTotal.subtract(expectedTiny).abs() <= expectedTiny.abs().multiply(BigDecimal("1e-30")),
+        )
+
+        val zero = TapeEvaluator.evaluate(CalcFile.parse(" + 0\n ^ 0.5\n").lines, 8)
+        assertTrue(zero.errors.isEmpty())
+        assertAmount("0", zero.grandTotal)
+
+        val fourthRoot = TapeEvaluator.evaluate(CalcFile.parse(" + 4\n ^ 0.25\n").lines, 8)
+        assertTrue(fourthRoot.errors.isEmpty())
+        assertTrue(
+            fourthRoot.grandTotal.subtract(BigDecimal("1.414213562373095048801688724209698"))
+                .abs() < BigDecimal("1e-30"),
+        )
+
+        val negativeFifthRoot = TapeEvaluator.evaluate(CalcFile.parse(" - 32\n ^ 0.2\n").lines, 8)
+        assertTrue(negativeFifthRoot.errors.isEmpty())
+        assertTrue(negativeFifthRoot.grandTotal.subtract(BigDecimal("-2")).abs() < BigDecimal("1e-30"))
+    }
+
+    @Test
+    fun aggregateRenderedBudgetRejectsExpansion() {
+        val text = " + 1e9999\n".repeat(2_000)
+        val prettyError = runCatching { TapeFormatter.pretty(text, 5) }.exceptionOrNull()
+        assertTrue(prettyError is IllegalArgumentException)
+        val writeError = runCatching { CalcFile.write(CalcFile.parse(text), emptyMap()) }.exceptionOrNull()
+        assertTrue(writeError is IllegalArgumentException)
+    }
+
+    @Test
+    fun prettyRoundTripUsesActiveGermanSeparators() {
+        val meta = CalcMeta(decimals = 2, decSep = ',', thouSep = '.', uuid = "german")
+        val pretty = TapeFormatter.pretty("1.234,50", 2, grouping = Grouping.COMMA, meta = meta)
+        assertTrue(pretty.contains("1.234,50"))
+        val doc = CalcFile.parse(pretty, meta)
+        assertAmount("1234.5", TapeEvaluator.evaluate(doc.lines, 2).grandTotal)
+    }
+
+    @Test
+    fun publicWriterRejectsUnsupportedValuesBeforeScaling() {
+        val doc = TapeDoc(
+            CalcMeta(),
+            listOf(TapeLine.Entry('+', BigDecimal("1e100000"), false, "")),
+        )
+        val error = runCatching { CalcFile.write(doc, emptyMap()) }.exceptionOrNull()
+        assertTrue(error is IllegalArgumentException)
+    }
+
+    @Test
+    fun unsupportedDerivedTotalsAreReported() {
+        val eval = TapeEvaluator.evaluate(CalcFile.parse(" + 1e10000\n".repeat(20)).lines, 8)
+        assertTrue(eval.errors.any { it.contains("total") || it.contains("subtotal") })
+    }
+
+    @Test
+    fun prettyUsesHeaderDiscoveredSeparators() {
+        val text = "<SFRCalculatorHeader>\nDECIMALS=2\nDECSEP=,\nTHOUSEP=.\n</SFRCalculatorHeader>\n1.234,50\n"
+        val pretty = TapeFormatter.pretty(text, 2, grouping = Grouping.COMMA)
+        assertTrue(pretty.contains("1.234,50"))
+        assertFalse(pretty.contains("1234.50"))
+        val german = CalcMeta(decimals = 2, decSep = ',', thouSep = '.', uuid = "german")
+        val doc = CalcFile.parse(pretty, german)
+        assertAmount("1234.5", TapeEvaluator.evaluate(doc.lines, 2).grandTotal)
+    }
+
+    @Test
+    fun negativeIndianGroupingKeepsSign() {
+        assertEquals(
+            "-12,34,567.00",
+            TapeFormatter.formatEntryNum(BigDecimal("-1234567"), 2, false, Grouping.INDIAN),
+        )
+    }
+
+    @Test
+    fun dateSuffixRemainsComment() {
+        assertTrue(CalcFile.parse("2026-09-24 planning\n").lines.first() is TapeLine.Comment)
+    }
+
+    @Test
+    fun unicodeFormulaRemainsComment() {
+        val doc = CalcFile.parse("2×(3+4)\n")
+        assertTrue(doc.lines.first() is TapeLine.Comment)
+        assertTrue(doc.warnings.any { it.contains("brackets") })
+    }
+
+    @Test
+    fun malformedExponentRemainsComment() {
+        assertTrue(CalcFile.parse("+ 1e\n").lines.first() is TapeLine.Comment)
+    }
+
+    @Test
+    fun headerMetadataLineWithoutEqualsIsInvalid() {
+        val text = "<SFRCalculatorHeader>\nDECIMALS=2\nGARBAGE\n</SFRCalculatorHeader>\n + 1\n"
+        assertFalse(CalcFile.hasHeader(text))
+        assertTrue(CalcFile.parse(text).warnings.any { it.contains("header metadata") })
+    }
+
+    @Test
+    fun operatorSeparatorHeaderIsInvalid() {
+        val text = "<SFRCalculatorHeader>\nDECSEP=+\nTHOUSEP=,\n</SFRCalculatorHeader>\n + 1\n"
+        assertFalse(CalcFile.hasHeader(text))
+    }
+
+    @Test
+    fun unsafeFallbackSeparatorsAreSanitized() {
+        val control = CalcFile.parse("1.5\n", CalcMeta(decSep = '\t', thouSep = ',')).meta
+        assertEquals('.', control.decSep)
+        assertEquals(',', control.thouSep)
+        val equal = CalcFile.parse("1.234\n", CalcMeta(decSep = ',', thouSep = ','))
+        assertEquals(',', equal.meta.decSep)
+        assertEquals('.', equal.meta.thouSep)
+        assertAmount("1234", TapeEvaluator.evaluate(equal.lines, 2).grandTotal)
+    }
+
+    @Test
+    fun controlSeparatorsFallBackToDefaults() {
+        val control = ''
+        assertEquals(
+            "1,234.50",
+            TapeFormatter.formatEntryNum(BigDecimal("1234.5"), 2, false, Grouping.COMMA, control, ','),
+        )
+        assertEquals(
+            "1,234.50",
+            TapeFormatter.formatNum(BigDecimal("1234.5"), 2, false, Grouping.COMMA, '.', control),
+        )
+    }
+
+    @Test
+    fun headerCaretValuesAreBounded() {
+        val text = "<SFRCalculatorHeader>\nCARETLINE=99999999\nCARETLINEOFFSET=99999999\n" +
+            "</SFRCalculatorHeader>\n + 1\n"
+        assertFalse(CalcFile.hasHeader(text))
+        val doc = CalcFile.parse(text)
+        assertEquals(0, doc.meta.caretLine)
+        assertEquals(0, doc.meta.caretOffset)
+        assertTrue(doc.warnings.any { it.contains("header metadata") })
+    }
+
+    @Test
+    fun exportMetaPrecedenceIsCallerThenHeader() {
+        val caller = CalcMeta(decimals = 2, uuid = "caller")
+        val parsed = CalcMeta(decimals = 5, uuid = "header")
+        assertEquals("caller", CalcExport.resolveExportMeta(caller, parsed).uuid)
+        assertEquals("header", CalcExport.resolveExportMeta(null, parsed).uuid)
+    }
+
+    @Test
+    fun formatEntryRejectsControlSeparators() {
+        val meta = CalcMeta(decimals = 2, decSep = 7.toChar(), thouSep = ',')
+        val out = CalcFile.formatEntry('+', BigDecimal("1234.5"), false, "", meta)
+        assertTrue(out.contains("1234.50"))
+        assertFalse(out.any { it.isISOControl() })
+    }
+
+    @Test
+    fun controlFallbackSeparatorPrettyRoundTrip() {
+        val pretty = TapeFormatter.pretty("1.5\n", 2, meta = CalcMeta(decSep = 7.toChar()))
+        assertTrue(pretty.contains("1.50"))
+        assertFalse(pretty.any { it.isISOControl() && it != '\n' })
+        assertAmount("1.5", TapeEvaluator.evaluate(CalcFile.parse(pretty).lines, 2).grandTotal)
+    }
+
+    @Test
+    fun controlUuidIsSanitizedOnWrite() {
+        val doc = TapeDoc(
+            CalcMeta(decimals = 2, uuid = 0.toChar() + "bad"),
+            listOf(TapeLine.Entry('+', BigDecimal("1"), false, "")),
+        )
+        val written = CalcFile.write(doc, emptyMap())
+        assertTrue(CalcFile.hasHeader(written))
+        assertFalse(written.any { it.isISOControl() && it != '\n' })
+    }
+
+    @Test
+    fun importPreservesDocumentUuid() {
+        val text = "<SFRCalculatorHeader>\nDECIMALS=2\n" +
+            "UUID=12345678-1234-1234-1234-1234567890ab\n</SFRCalculatorHeader>\n + 1\n"
+        assertEquals(
+            "12345678-1234-1234-1234-1234567890ab",
+            CalcExport.importToTapeText(text).meta.uuid,
+        )
+    }
+
+    @Test
+    fun importPreservesSourceCaret() {
+        val text = "<SFRCalculatorHeader>\nDECIMALS=2\nDECSEP=.\nTHOUSEP=,\n" +
+            "CARETLINE=7\nCARETLINEOFFSET=3\n</SFRCalculatorHeader>\n + 1\n"
+        val result = CalcExport.importToTapeText(text)
+        assertEquals(7, result.meta.caretLine)
+        assertEquals(3, result.meta.caretOffset)
+    }
+
+    @Test
+    fun malformedHeaderRoundTripIsStable() {
+        val text = "<SFRCalculatorHeader>\nDECIMALS=2\nDECSEP=,\n</SFRCalculatorHeader>\n + 1\n"
+        val doc = CalcFile.parse(text)
+        assertTrue(doc.warnings.any { it.contains("header metadata") })
+        val written = CalcFile.write(doc, emptyMap())
+        assertTrue(CalcFile.hasHeader(written))
+        val reparsed = CalcFile.parse(written)
+        assertTrue(reparsed.warnings.none { it.contains("header metadata") })
+        assertAmount("1", TapeEvaluator.evaluate(reparsed.lines, 2).grandTotal)
+    }
+
+    @Test
+    fun headerlessImportUsesActiveSeparators() {
+        val imported = CalcExport.importToTapeText(
+            "1.234,50",
+            CalcMeta(decimals = 2, decSep = ',', thouSep = '.', uuid = "active"),
+        )
+        val doc = CalcFile.parse(imported.tapeText, imported.meta)
+        assertAmount("1234.5", TapeEvaluator.evaluate(doc.lines, 2).grandTotal)
     }
 }

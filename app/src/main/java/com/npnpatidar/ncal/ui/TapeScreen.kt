@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -47,6 +48,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
@@ -82,6 +84,8 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -101,12 +105,26 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import android.content.Intent
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalTextInputService
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
@@ -114,8 +132,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.npnpatidar.ncal.settings.ThemeMode
-import com.npnpatidar.ncal.storage.NotesRepository
 import com.npnpatidar.ncal.tape.TapeEdit
+import com.npnpatidar.ncal.tape.TapeFormatter
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -130,20 +149,29 @@ import kotlinx.coroutines.withTimeoutOrNull
 @Composable
 fun TapeScreen(vm: TapeViewModel = viewModel()) {
     val state by vm.state.collectAsState()
+    val context = LocalContext.current
+    LaunchedEffect(vm) {
+        vm.shareIntents.collect { intent ->
+            context.startActivity(Intent.createChooser(intent, null))
+        }
+    }
     val snack = remember { SnackbarHostState() }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
-    var renameOpen by remember { mutableStateOf(false) }
-    var renameText by remember { mutableStateOf("") }
-    var renameTarget by remember { mutableStateOf<NotesRepository.NoteMeta?>(null) }
-    var pendingDelete by remember { mutableStateOf<NotesRepository.NoteMeta?>(null) }
-    var noteMenu by remember { mutableStateOf<NotesRepository.NoteMeta?>(null) }
+    var renameOpen by rememberSaveable { mutableStateOf(false) }
+    var renameText by rememberSaveable { mutableStateOf("") }
+    var renameTargetId by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
+    var noteMenuId by rememberSaveable { mutableStateOf<String?>(null) }
+    val renameTarget = state.notes.firstOrNull { it.id == renameTargetId }
+    val pendingDelete = state.notes.firstOrNull { it.id == pendingDeleteId }
+    val noteMenu = state.notes.firstOrNull { it.id == noteMenuId }
     val importLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetMultipleContents(),
+        ActivityResultContracts.OpenMultipleDocuments(),
     ) { uris ->
         if (uris.isNotEmpty()) vm.importFiles(uris)
     }
-    var showSettings by remember { mutableStateOf(false) }
+    var showSettings by rememberSaveable { mutableStateOf(false) }
     val tapeFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     // ABC mode: cursor goes straight into the note and the keyboard opens.
@@ -151,12 +179,16 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
     // Opening the drawer always dismisses the keyboard first (else it stays
     // up behind the drawer); closing it restores ABC state.
     LaunchedEffect(state.keypadMode, showSettings) {
-        if (showSettings) return@LaunchedEffect
+        if (showSettings) {
+            keyboard?.hide()
+            return@LaunchedEffect
+        }
         if (state.keypadMode == KeypadMode.SYSTEM) {
             tapeFocus.requestFocus()
             keyboard?.show()
-        } else if (state.keypadMode == KeypadMode.CALC) {
-            tapeFocus.requestFocus()
+        } else {
+            keyboard?.hide()
+            if (state.keypadMode == KeypadMode.CALC) tapeFocus.requestFocus()
         }
     }
     LaunchedEffect(drawerState.currentValue) {
@@ -215,19 +247,24 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                             // custom.) The ⋮ button opens the same menu.
                             val selected = note.id == state.noteId
                             Surface(
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp, vertical = 2.dp),
                                 shape = MaterialTheme.shapes.large,
                                 color = if (selected) MaterialTheme.colorScheme.secondaryContainer
                                 else Color.Transparent,
                             ) {
                                 Row(
-                                    modifier = Modifier.combinedClickable(
-                                        onClick = {
-                                            vm.selectNote(note.id)
-                                            scope.launch { drawerState.close() }
-                                        },
-                                        onLongClick = { noteMenu = note },
-                                    ).padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp),
+                                    modifier = Modifier
+                                        .combinedClickable(
+                                            onClick = {
+                                                vm.selectNote(note.id)
+                                                scope.launch { drawerState.close() }
+                                            },
+                                            onLongClick = { noteMenuId = note.id },
+                                        )
+                                        .semantics { this.selected = selected }
+                                        .padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text(
@@ -236,17 +273,23 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                                         color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer
                                         else MaterialTheme.colorScheme.onSurface,
                                     )
-                                    IconButton(onClick = { noteMenu = note }) {
+                                    if (selected) {
+                                        Icon(
+                                            Icons.Filled.Check,
+                                            contentDescription = "Selected note",
+                                        )
+                                    }
+                                    IconButton(onClick = { noteMenuId = note.id }) {
                                         Icon(
                                             Icons.Filled.MoreVert,
-                                            contentDescription = "Note options",
+                                             contentDescription = "Options for ${note.name}",
                                         )
                                     }
                                 }
                             }
                         }
                     }
-                    TextButton(onClick = { importLauncher.launch("*/*") }) {
+                     TextButton(onClick = { importLauncher.launch(arrayOf("text/plain", "application/octet-stream")) }) {
                         Text("⇩ Import .calc / .txt")
                     }
                     TextButton(onClick = {
@@ -271,6 +314,7 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                     settings = state.settings,
                     onUpdate = vm::updateSettings,
                     onBack = { showSettings = false },
+                    snackbarHostState = snack,
                 )
             } else {
             val systemMode = state.keypadMode == KeypadMode.SYSTEM
@@ -282,8 +326,8 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                             Text(
                                 state.noteName.ifBlank { "ncal" },
                                 modifier = Modifier.clickable {
-                                    renameTarget = state.notes.firstOrNull { it.id == state.noteId }
-                                    renameText = state.noteName
+                                     renameTargetId = state.noteId
+                                     renameText = state.noteName
                                     renameOpen = true
                                 },
                             )
@@ -353,8 +397,11 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                     var followActive by remember(state.noteId) { mutableStateOf(false) }
                     val tapeField: @Composable () -> Unit = {
                         BasicTextField(
-                            value = TextFieldValue(state.tapeText, state.tapeSel),
-                            onValueChange = vm::onTapeChange,
+                             value = TextFieldValue(state.tapeText, state.tapeSel),
+                             onValueChange = vm::onTapeChange,
+                             visualTransformation = remember(state.lineMarks) {
+                                 TapeMarkTransformation(state.lineMarks)
+                             },
                             modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max).focusRequester(tapeFocus)
                                 .onFocusChanged { fieldFocused = it.isFocused }
                                 .pinchZoom(
@@ -455,13 +502,18 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                         }
                     }
 
-                    if (state.errors.isNotEmpty()) {
-                        Text(
-                            state.errors.first(),
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
+                     val statusMessage = (state.errors + state.warnings).firstOrNull()
+                     if (statusMessage != null) {
+                         Text(
+                             statusMessage,
+                             color = if (state.errors.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                             style = MaterialTheme.typography.bodySmall,
+                             modifier = Modifier.semantics {
+                                 liveRegion = LiveRegionMode.Assertive
+                                 contentDescription = "Tape message: $statusMessage"
+                             },
+                         )
+                     }
                 }
             }
             }
@@ -496,42 +548,56 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
         val menuNote = noteMenu
         if (menuNote != null) {
             AlertDialog(
-                onDismissRequest = { noteMenu = null },
+                onDismissRequest = { noteMenuId = null },
                 title = { Text(menuNote.name) },
                 text = {
                     Column {
                         TextButton(
                             onClick = {
-                                noteMenu = null
-                                renameTarget = menuNote
-                                renameText = menuNote.name
+                                noteMenuId = null
+                                 renameTargetId = menuNote.id
+                                 renameText = menuNote.name
                                 renameOpen = true
                             },
                         ) { Text("Rename") }
                         TextButton(
                             onClick = {
-                                noteMenu = null
+                                noteMenuId = null
                                 vm.duplicateNote(menuNote.id)
                             },
                         ) { Text("Duplicate") }
                         TextButton(
                             onClick = {
-                                noteMenu = null
+                                noteMenuId = null
                                 vm.exportNote(menuNote.id, asCalc = false)
                                 scope.launch { drawerState.close() }
                             },
                         ) { Text("Export to .txt") }
                         TextButton(
                             onClick = {
-                                noteMenu = null
+                                noteMenuId = null
                                 vm.exportNote(menuNote.id, asCalc = true)
                                 scope.launch { drawerState.close() }
                             },
                         ) { Text("Export to .calc") }
                         TextButton(
                             onClick = {
-                                noteMenu = null
-                                pendingDelete = menuNote
+                                noteMenuId = null
+                                vm.shareNote(menuNote.id, asCalc = false)
+                                scope.launch { drawerState.close() }
+                            },
+                        ) { Text("Share .txt") }
+                        TextButton(
+                            onClick = {
+                                noteMenuId = null
+                                vm.shareNote(menuNote.id, asCalc = true)
+                                scope.launch { drawerState.close() }
+                            },
+                        ) { Text("Share .calc") }
+                        TextButton(
+                            onClick = {
+                                noteMenuId = null
+                                pendingDeleteId = menuNote.id
                             },
                         ) { Text("Delete") }
                     }
@@ -542,24 +608,36 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
 
         val doomed = pendingDelete
         if (doomed != null) {            AlertDialog(
-                onDismissRequest = { pendingDelete = null },
+                onDismissRequest = { pendingDeleteId = null },
                 title = { Text("Delete note?") },
                 text = { Text("\"${doomed.name}\" and all its lines will be gone. This cannot be undone.") },
                 confirmButton = {
                     TextButton(
                         onClick = {
                             vm.deleteNote(doomed.id)
-                            pendingDelete = null
+                            pendingDeleteId = null
                             scope.launch { drawerState.close() }
                         },
                     ) { Text("Delete") }
                 },
                 dismissButton = {
-                    TextButton(onClick = { pendingDelete = null }) { Text("Keep") }
+                    TextButton(onClick = { pendingDeleteId = null }) { Text("Keep") }
                 },
             )
         }
     }
+}
+
+private const val KEYPAD_KEY_COUNT = 20
+private val keypadMinColumnWidth = 48.dp
+private val keypadSpacing = 6.dp
+
+private fun keypadColumnCount(width: Dp): Int {
+    if (!width.value.isFinite()) return KEYPAD_KEY_COUNT
+    return maxOf(
+        1,
+        ((width + keypadSpacing) / (keypadMinColumnWidth + keypadSpacing)).toInt(),
+    )
 }
 
 /**
@@ -573,7 +651,7 @@ private fun BottomPinnedControls(vm: TapeViewModel, state: TapeUiState) {
     Column(modifier = Modifier.fillMaxWidth().navigationBarsPadding().imePadding()) {
         HorizontalDivider()
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -589,13 +667,52 @@ private fun BottomPinnedControls(vm: TapeViewModel, state: TapeUiState) {
                 onClick = { vm.setKeypadMode(KeypadMode.HIDDEN) },
                 enabled = state.keypadMode != KeypadMode.HIDDEN,
             ) { Text("Hide") }
-                        Text(
-                            state.totalText,
-                            style = MaterialTheme.typography.headlineSmall,
-                            textAlign = TextAlign.End,
-                            maxLines = 1,
-                            modifier = Modifier.weight(1f),
-                        )
+            OutlinedButton(
+                onClick = vm::redo,
+                enabled = state.canRedo,
+                modifier = Modifier.semantics { contentDescription = "Redo" },
+            ) { Text("Redo") }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedButton(
+                onClick = vm::memoryRecall,
+                modifier = Modifier.semantics { contentDescription = "Recall memory" },
+            ) { Text("MR") }
+            OutlinedButton(
+                onClick = vm::memoryAdd,
+                modifier = Modifier.semantics { contentDescription = "Add to memory" },
+            ) { Text("M+") }
+            OutlinedButton(
+                onClick = vm::memorySub,
+                modifier = Modifier.semantics { contentDescription = "Subtract from memory" },
+            ) { Text("M−") }
+            OutlinedButton(
+                onClick = vm::memoryClear,
+                modifier = Modifier.semantics { contentDescription = "Clear memory" },
+            ) { Text("MC") }
+            Text("M ${state.memoryText}", style = MaterialTheme.typography.bodySmall, maxLines = 1)
+            Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
+                Text(
+                    state.totalText,
+                    style = MaterialTheme.typography.headlineSmall,
+                    textAlign = TextAlign.End,
+                    maxLines = 1,
+                    modifier = Modifier.semantics {
+                        liveRegion = LiveRegionMode.Polite
+                        contentDescription = "Section total: ${state.totalText}"
+                    },
+                )
+                Text(
+                    "Grand ${state.grandText}",
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    modifier = Modifier.semantics { contentDescription = "Grand total: ${state.grandText}" },
+                )
+            }
         }
 
         val landscape = LocalConfiguration.current.orientation ==
@@ -604,15 +721,24 @@ private fun BottomPinnedControls(vm: TapeViewModel, state: TapeUiState) {
         val keyConfigured: Dp =
             (if (landscape) st.keyHeightLandDp else st.keyHeightPortDp).dp
         // The keypad fits the space it gets: keys shrink to the
-        // available height (capped so the tape keeps room) and
-        // never scroll.
+        // available height (capped so the tape keeps room) and scroll
+        // only when minimum targets or large text do not fit.
                     if (state.keypadMode == KeypadMode.CALC) {
                         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                            val columns = keypadColumnCount(maxWidth)
+                            val rows = (KEYPAD_KEY_COUNT + columns - 1) / columns
                             val cap = maxHeight * 0.6f
-                            val rows = if (landscape) 2 else 5
-                            val gap = 6.dp
-                            val fitted = ((cap - gap * (rows - 1)) / rows).coerceAtLeast(20.dp)
-                            KeypadGrid(
+                            val minimumKeyHeight = with(LocalDensity.current) {
+                                keyFont.toDp() + 4.dp
+                            }.coerceAtLeast(keypadMinColumnWidth)
+                            val fitted = ((cap - keypadSpacing * (rows - 1)) / rows)
+                                .coerceAtLeast(minimumKeyHeight)
+                            val boundedKeyHeight = minOf(keyConfigured, fitted)
+                                .coerceAtLeast(minimumKeyHeight)
+                            val keypadScrollable = boundedKeyHeight * rows +
+                                keypadSpacing * (rows - 1) > cap
+                            Box(modifier = Modifier.heightIn(max = cap)) {
+                                KeypadGrid(
                                 onDigit = vm::key,
                                 onOp = vm::key,
                                 onEquals = vm::equals,
@@ -620,11 +746,14 @@ private fun BottomPinnedControls(vm: TapeViewModel, state: TapeUiState) {
                                 onUndo = vm::undo,
                                 onBackspace = vm::backspace,
                                 keyFontSp = keyFont,
-                                keyHeight = minOf(keyConfigured, fitted),
+                                keyHeight = boundedKeyHeight,
+                                userScrollEnabled = keypadScrollable,
                                 hapticsOn = state.settings.haptics,
                                 soundOn = state.settings.keySound,
                                 landscape = landscape,
-                            )
+                                canUndo = state.canUndo,
+                                )
+                            }
                         }
                     }
                 }
@@ -777,9 +906,11 @@ private fun KeypadGrid(
     onBackspace: () -> Unit,
     keyFontSp: TextUnit,
     keyHeight: Dp,
+    userScrollEnabled: Boolean,
     hapticsOn: Boolean,
     soundOn: Boolean,
     landscape: Boolean,
+    canUndo: Boolean,
 ) {
     val haptics = LocalView.current
     val context = LocalContext.current
@@ -807,26 +938,26 @@ private fun KeypadGrid(
     // 10 columns x 2 rows (digits on top, functions below) so the keyboard
     // stays short and the note keeps the room.
     val portraitKeys: List<KeyDef> = listOf(
-        KeyDef(action = onClear, label = "AC"),
-        KeyDef(action = onUndo, label = "↩"),
-        KeyDef(action = onBackspace, label = "⌫"),
-        KeyDef(action = { onOp("\n / ") }, label = "÷"),
+        KeyDef(action = onClear, label = "AC", description = "Clear all"),
+        KeyDef(action = onUndo, label = "↩", description = "Undo", enabled = canUndo),
+        KeyDef(action = onBackspace, label = "⌫", description = "Backspace"),
+        KeyDef(action = { onOp("\n / ") }, label = "÷", description = "Divide"),
         KeyDef(action = { onDigit("7") }, label = "7"),
         KeyDef(action = { onDigit("8") }, label = "8"),
         KeyDef(action = { onDigit("9") }, label = "9"),
-        KeyDef(action = { onOp("\n * ") }, label = "×"),
+        KeyDef(action = { onOp("\n * ") }, label = "×", description = "Multiply"),
         KeyDef(action = { onDigit("4") }, label = "4"),
         KeyDef(action = { onDigit("5") }, label = "5"),
         KeyDef(action = { onDigit("6") }, label = "6"),
-        KeyDef(action = { onOp("\n - ") }, label = "−"),
+        KeyDef(action = { onOp("\n - ") }, label = "−", description = "Subtract"),
         KeyDef(action = { onDigit("1") }, label = "1"),
         KeyDef(action = { onDigit("2") }, label = "2"),
         KeyDef(action = { onDigit("3") }, label = "3"),
-        KeyDef(action = { onOp("\n + ") }, label = "+"),
+        KeyDef(action = { onOp("\n + ") }, label = "+", description = "Add"),
         KeyDef(action = { onDigit("0") }, label = "0"),
         KeyDef(action = { onDigit(".") }, label = "."),
-        KeyDef(action = { onOp("% ") }, label = "%"),
-        KeyDef(action = onEquals, label = "="),
+        KeyDef(action = { onOp("% ") }, label = "%", description = "Percent"),
+        KeyDef(action = onEquals, label = "=", description = "Equals"),
     )
     val landscapeKeys: List<KeyDef> = listOf(
         KeyDef(action = { onDigit("1") }, label = "1"),
@@ -840,37 +971,69 @@ private fun KeypadGrid(
         KeyDef(action = { onDigit("9") }, label = "9"),
         KeyDef(action = { onDigit("0") }, label = "0"),
         KeyDef(action = { onDigit(".") }, label = "."),
-        KeyDef(action = { onOp("% ") }, label = "%"),
-        KeyDef(action = { onOp("\n + ") }, label = "+"),
-        KeyDef(action = { onOp("\n - ") }, label = "−"),
-        KeyDef(action = { onOp("\n * ") }, label = "×"),
-        KeyDef(action = { onOp("\n / ") }, label = "÷"),
-        KeyDef(action = onEquals, label = "="),
-        KeyDef(action = onClear, label = "AC"),
-        KeyDef(action = onUndo, label = "↩"),
-        KeyDef(action = onBackspace, label = "⌫"),
+        KeyDef(action = { onOp("% ") }, label = "%", description = "Percent"),
+        KeyDef(action = { onOp("\n + ") }, label = "+", description = "Add"),
+        KeyDef(action = { onOp("\n - ") }, label = "−", description = "Subtract"),
+        KeyDef(action = { onOp("\n * ") }, label = "×", description = "Multiply"),
+        KeyDef(action = { onOp("\n / ") }, label = "÷", description = "Divide"),
+        KeyDef(action = onEquals, label = "=", description = "Equals"),
+        KeyDef(action = onClear, label = "AC", description = "Clear all"),
+        KeyDef(action = onUndo, label = "↩", description = "Undo", enabled = canUndo),
+        KeyDef(action = onBackspace, label = "⌫", description = "Backspace"),
     )
     val keys = if (landscape) landscapeKeys else portraitKeys
     LazyVerticalGrid(
-        columns = GridCells.Fixed(if (landscape) 10 else 4),
+        columns = GridCells.Adaptive(minSize = keypadMinColumnWidth),
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-        userScrollEnabled = false,
+        horizontalArrangement = Arrangement.spacedBy(keypadSpacing),
+        verticalArrangement = Arrangement.spacedBy(keypadSpacing),
+        userScrollEnabled = userScrollEnabled,
     ) {
         items(keys) { key ->
             Button(
-                onClick = { press(key.action) },
-                modifier = Modifier.height(keyHeight),
+                 onClick = { press(key.action) },
+                 enabled = key.enabled,
+                 modifier = Modifier
+                     .heightIn(min = maxOf(keyHeight, keypadMinColumnWidth))
+                     .semantics { contentDescription = key.description ?: key.label.orEmpty() },
                 contentPadding = PaddingValues(2.dp),
             ) {
-                Text(key.label ?: "", fontSize = keyFontSp, maxLines = 1)
+                Text(key.label ?: "", fontSize = keyFontSp, lineHeight = keyFontSp, maxLines = 1)
             }
         }
+    }
+}
+
+private class TapeMarkTransformation(
+    private val marks: List<TapeFormatter.LineMark>,
+) : VisualTransformation {
+    override fun filter(text: AnnotatedString): TransformedText {
+        val styled = buildAnnotatedString {
+            append(text)
+            var start = 0
+            marks.forEach { mark ->
+                val end = text.indexOf('\n', start).let { if (it < 0) text.length else it }
+                if (end > start) {
+                    addStyle(
+                        SpanStyle(
+                            color = if (mark.negative) Color(0xFFB3261E) else Color.Unspecified,
+                            fontWeight = if (mark.bold) FontWeight.Bold else FontWeight.Normal,
+                        ),
+                        start,
+                        end,
+                    )
+                }
+                if (end >= text.length) return@forEach
+                start = end + 1
+            }
+        }
+        return TransformedText(styled, OffsetMapping.Identity)
     }
 }
 
 private data class KeyDef(
     val action: () -> Unit,
     val label: String? = null,
+    val description: String? = null,
+    val enabled: Boolean = true,
 )

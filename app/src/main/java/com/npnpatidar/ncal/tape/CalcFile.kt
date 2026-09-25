@@ -1,18 +1,8 @@
 package com.npnpatidar.ncal.tape
 
+import java.math.BigDecimal
 import java.math.RoundingMode
 
-/**
- * `.calc` plain-text reader/writer, byte-compatible with CalcTape exports.
- *
- * Locked against `hisab.calc` (54 lines):
- * - Entry:     `" " + op + amount.padStart(17) + " " + comment`
- * - Separator: `" ------------------ "` (1 space + 18 dashes + 1 space)
- * - Balance:   same as entry with empty comment, e.g. `" +        456.00000 "`
- * - Header keys in fixed order; body ends with two blank lines + trailing LF.
- * - File may start with a BOM (stripped on import, never written).
- * - Writer omits thousands grouping (always parseable); parser accepts it.
- */
 object CalcFile {
 
     const val SEPARATOR = " ------------------ "
@@ -22,34 +12,84 @@ object CalcFile {
 
     private val separatorRe = Regex("""^\s*-{2,}\s?$""")
     private val headingRe = Regex("""^(#+)\s?(.*)$""")
-    // \p{Nd} = any Unicode decimal digit (Devanagari, Arabic-Indic, …);
-    // values are folded to ASCII in normalizeNumber, comments stay verbatim.
     private const val NUM_CORE = """(?:\.\p{Nd}+|\p{Nd}[\p{Nd}.,]*)(?:[eE][+-]?[0-9]+)?"""
-    // Head number (optional unary sign, leading-dot and scientific forms) and
-    // inline `op number` splits (matchAt/find: no anchors). Splits also take
-    // a sign after the operator, so `2^-3` is 0.125 and `5 * -2` is -10.
     private val headNumRe = Regex("([+-]?\\s*$NUM_CORE)(%?)")
     private val splitRe = Regex("([+\\-*/^])\\s*([+-]?\\s*$NUM_CORE)(%?)")
     private val bareOpRe = Regex("""^\s*[+\-*/^]\s*([+-]\s*)?${'$'}""")
-    private val currencyLeadRe = Regex("""^[$€₹£¥¢₩₽₺₫₪\s]+""")
+    private val currencyLeadRe = Regex("""^[\p{Sc}\s]+""")
     private val varAssignRe = Regex("""^[A-Za-z_][A-Za-z0-9_]*\s*=.*""")
+    private val isoDateRe = Regex("""^\d{4}[-/]\d{1,2}[-/]\d{1,2}$""")
+    private val isoDateTimeRe = Regex(
+        """^\d{4}[-/]\d{1,2}[-/]\d{1,2}(?:[T ]\d{1,2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$""",
+    )
 
-    /** True for an open operator line with no digits yet (` * `, ` *- `). */
     fun isBareOpLine(raw: String): Boolean = bareOpRe.matches(raw)
 
-    /** True when the text carries a `.calc` header block (explicit metadata). */
-    fun hasHeader(text: String): Boolean = text.contains(HEADER_OPEN)
+    private fun isSafeSeparator(separator: Char): Boolean =
+        !separator.isLetterOrDigit() && !separator.isWhitespace() && !separator.isISOControl() &&
+            separator !in "+-*/^%()"
 
-    /**
-     * Hint when a comment line looks like an unsupported construct: brackets
-     * holding a calculation (`(5+3)`), or a variable definition (`x = 5`).
-     * The line is always preserved; this just explains why it doesn't count.
-     * Pure prose (`(see receipt)`, `call mom`) stays silent.
-     */
+    private data class HeaderData(
+        val openIndex: Int,
+        val closeIndex: Int,
+        val values: Map<String, String>,
+        val valid: Boolean,
+    )
+
+    private fun readHeader(lines: List<String>): HeaderData? {
+        val openIndex = lines.indexOfFirst { it.trim() == HEADER_OPEN }
+        if (openIndex != lines.indexOfFirst { it.isNotBlank() }) return null
+        if (openIndex < 0) return null
+        val closeIndex = lines.indexOfFirst { it.trim() == HEADER_CLOSE }
+        if (closeIndex <= openIndex) return null
+        if (lines.subList(openIndex + 1, closeIndex).any { it.trim() == HEADER_OPEN }) return null
+        val values = mutableMapOf<String, String>()
+        var malformedLine = false
+        for (line in lines.subList(openIndex + 1, closeIndex)) {
+            val eq = line.indexOf('=')
+            if (eq > 0) {
+                values[line.substring(0, eq).trim()] = line.substring(eq + 1).trim()
+            } else if (line.isNotBlank()) {
+                malformedLine = true
+            }
+        }
+        val decimalsText = values["DECIMALS"]
+        val decimals = decimalsText?.toIntOrNull()
+        val decSep = values["DECSEP"]
+        val thouSep = values["THOUSEP"]
+        val uuid = values["UUID"]
+        val caretLineText = values["CARETLINE"]
+        val caretLine = caretLineText?.toIntOrNull()
+        val caretOffsetText = values["CARETLINEOFFSET"]
+        val caretOffset = caretOffsetText?.toIntOrNull()
+        val separatorsValid = when {
+            decSep == null && thouSep == null -> true
+            decSep == null || thouSep == null -> false
+            else -> decSep.length == 1 && thouSep.length == 1 && decSep[0] != thouSep[0] &&
+                isSafeSeparator(decSep[0]) && isSafeSeparator(thouSep[0])
+        }
+        val valid = !malformedLine &&
+            (decimalsText == null || (decimals != null && decimals in 0..TapeLimits.MAX_DECIMALS)) &&
+            separatorsValid &&
+            (uuid == null || (uuid.length <= 128 && uuid.none { it.isISOControl() })) &&
+
+            (caretLineText == null || (caretLine != null && caretLine >= 0 && caretLine <= TapeLimits.MAX_LINES)) &&
+            (caretOffsetText == null || (caretOffset != null && caretOffset >= 0 && caretOffset <= TapeLimits.MAX_LINE_CHARS))
+        return HeaderData(openIndex, closeIndex, values, valid)
+    }
+
+    fun hasHeader(text: String): Boolean {
+        if (text.length > TapeLimits.MAX_INPUT_CHARS) return false
+        val clean = text.removePrefix("\uFEFF")
+        return readHeader(clean.lines())?.valid == true
+    }
+
+    private val operatorChars = setOf('+', '-', '*', '/', '^', '%', '×', '÷', '−', '–')
+
     private fun unsupportedHint(ln: String, idx: Int): String? {
         val t = ln.trim()
-        if (t.contains('(') && t.contains(')') && t.any { it.isDigit() } &&
-            t.any { it == '+' || it == '-' || it == '*' || it == '/' || it == '^' || it == '%' }
+        if ((t.contains('(') || t.contains(')')) && t.any { it.isDigit() } &&
+            t.any { it in operatorChars }
         ) {
             return "line ${idx + 1}: brackets aren't calculated yet — kept as a note"
         }
@@ -59,75 +99,122 @@ object CalcFile {
         return null
     }
 
-    fun parse(text: String): TapeDoc {
+    private val datePrefixRe = Regex(
+        """^\d{4}[-/]\d{1,2}[-/]\d{1,2}(?:[T ]\d{1,2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?""",
+    )
+
+    fun parse(text: String, fallbackMeta: CalcMeta = CalcMeta()): TapeDoc {
+        val safeDecSep = if (fallbackMeta.decSep.isISOControl()) '.' else fallbackMeta.decSep
+        var safeThouSep = if (fallbackMeta.thouSep.isISOControl()) ',' else fallbackMeta.thouSep
+        if (safeThouSep == safeDecSep) safeThouSep = if (safeDecSep == ',') '.' else ','
+        val safeFallback = fallbackMeta.copy(
+            decimals = TapeLimits.safeDecimals(fallbackMeta.decimals),
+            decSep = safeDecSep,
+            thouSep = safeThouSep,
+            uuid = fallbackMeta.uuid.take(128),
+            caretLine = fallbackMeta.caretLine.coerceIn(0, TapeLimits.MAX_LINES),
+            caretOffset = fallbackMeta.caretOffset.coerceIn(0, TapeLimits.MAX_LINE_CHARS),
+        )
+        if (text.length > TapeLimits.MAX_INPUT_CHARS) {
+            return TapeDoc(safeFallback, emptyList(), listOf("input exceeds the supported size"))
+        }
         val clean = text.removePrefix("\uFEFF")
-        val all = clean.split("\n").map { it.removeSuffix("\r") }
-        var meta = CalcMeta()
+        val all = clean.lines()
+        if (all.size > TapeLimits.MAX_LINES) {
+            return TapeDoc(safeFallback, emptyList(), listOf("input has too many lines"))
+        }
         val warnMsgs = mutableListOf<String>()
+        val header = readHeader(all)
+        var meta = safeFallback
         var body = all
-        val openIdx = all.indexOfFirst { it.trim() == HEADER_OPEN }
-        val closeIdx = all.indexOfFirst { it.trim() == HEADER_CLOSE }
-        if (openIdx >= 0 && closeIdx > openIdx) {
-            val map = mutableMapOf<String, String>()
-            for (i in openIdx + 1 until closeIdx) {
-                val eq = all[i].indexOf('=')
-                if (eq > 0) map[all[i].substring(0, eq).trim()] = all[i].substring(eq + 1)
+        if (header != null) {
+            if (header.valid) {
+                val decSep = header.values["DECSEP"]?.singleOrNull() ?: '.'
+                val thouSep = header.values["THOUSEP"]?.singleOrNull() ?: ','
+                meta = CalcMeta(
+                    decimals = TapeLimits.safeDecimals(header.values["DECIMALS"]?.toIntOrNull() ?: 5),
+                    decSep = decSep,
+                    thouSep = thouSep,
+                    uuid = header.values["UUID"]?.ifBlank { null } ?: java.util.UUID.randomUUID().toString(),
+                    caretLine = header.values["CARETLINE"]?.toIntOrNull()
+                        ?.coerceIn(0, TapeLimits.MAX_LINES) ?: 0,
+                    caretOffset = header.values["CARETLINEOFFSET"]?.toIntOrNull()
+                        ?.coerceIn(0, TapeLimits.MAX_LINE_CHARS) ?: 0,
+                )
+                body = all.drop(header.closeIndex + 1)
+            } else {
+                warnMsgs.add("header metadata is invalid; using defaults")
             }
-            meta = CalcMeta(
-                decimals = map["DECIMALS"]?.toIntOrNull() ?: 5,
-                decSep = map["DECSEP"]?.firstOrNull() ?: '.',
-                thouSep = map["THOUSEP"]?.firstOrNull() ?: ',',
-                uuid = map["UUID"]?.ifBlank { null } ?: java.util.UUID.randomUUID().toString(),
-                caretLine = map["CARETLINE"]?.toIntOrNull() ?: 0,
-                caretOffset = map["CARETLINEOFFSET"]?.toIntOrNull() ?: 0,
-            )
-            body = all.drop(closeIdx + 1)
         }
 
         val lines = mutableListOf<TapeLine>()
         body.forEachIndexed { idx, raw ->
+            if (raw.length > TapeLimits.MAX_LINE_CHARS) {
+                warnMsgs.add("line ${idx + 1}: line is too long, kept as a comment")
+                lines.add(TapeLine.Comment(raw))
+                return@forEachIndexed
+            }
             val ln = raw
             when {
-                ln.isEmpty() -> lines.add(TapeLine.Blank)
-                separatorRe.matches(ln) ->
-                    lines.add(TapeLine.Separator)
-                // A lone `=` typed in ABC closes the block, like Enter/=.
-                ln.trim() == "=" ->
-                    lines.add(TapeLine.Separator)
-                ln.trim().startsWith("#") -> {
-                    val m = headingRe.matchEntire(ln.trim())!!
-                    lines.add(TapeLine.Heading(m.groupValues[2], ln))
+                ln.isBlank() -> lines.add(TapeLine.Blank)
+                separatorRe.matches(ln) -> lines.add(TapeLine.Separator)
+                ln.trim() == "=" -> lines.add(TapeLine.Separator)
+                ln.trimStart().startsWith("#") -> {
+                    val headingRaw = ln.trimStart()
+                    val m = headingRe.matchEntire(headingRaw)
+                    if (m != null) lines.add(TapeLine.Heading(m.groupValues[2], ln)) else lines.add(TapeLine.Comment(ln))
                 }
+                isoDateRe.matches(ln.trim()) || isoDateTimeRe.matches(ln.trim()) -> lines.add(TapeLine.Comment(ln))
+                datePrefixRe.find(ln.trim())?.let { match ->
+                    ln.trim().substring(match.range.last + 1).takeIf {
+                        it.isNotBlank() && it.trimStart().firstOrNull() !in operatorChars
+                    }
+                } != null -> lines.add(TapeLine.Comment(ln))
                 else -> {
-                    val raws = tokenizeEntryLine(ln.trim())
+                    val hint = unsupportedHint(ln, idx)
+                    if (hint != null) {
+                        warnMsgs.add(hint)
+                        lines.add(TapeLine.Comment(ln))
+                        return@forEachIndexed
+                    }
+                    val raws = tokenizeEntryLine(ln)
                     if (raws == null) {
-                        // A lone operator being typed (` + `) is silent;
-                        // garbage after an operator warns once — unless a more
-                        // specific hint applies (brackets/variables below).
                         val t = ln.trim()
                         val leadOp = t.firstOrNull()?.let { o ->
                             o == '+' || o == '-' || o == '*' || o == '/' || o == '^'
                         } == true
-                        val hint = unsupportedHint(ln, idx)
-                        when {
-                            hint != null -> warnMsgs.add(hint)
-                            leadOp && t.substring(1).trim().isNotEmpty() ->
-                                warnMsgs.add("line ${idx + 1}: bad number, kept as comment")
+                        if (leadOp && t.substring(1).trim().isNotEmpty()) {
+                            warnMsgs.add("line ${idx + 1}: bad number, kept as a comment")
                         }
                         lines.add(TapeLine.Comment(ln))
                     } else {
                         val tmp = mutableListOf<TapeLine.Entry>()
                         var ok = true
+                        var limitHit = false
                         for (r in raws) {
-                            val amount = normalizeNumber(r.num, meta).toBigDecimalOrNull()
-                            if (amount == null) {
+                            if (r.num.length > TapeLimits.MAX_TOKEN_CHARS) {
                                 ok = false
+                                limitHit = true
+                                break
+                            }
+                            val amount = try {
+                                normalizeNumber(r.num, meta)?.toBigDecimalOrNull()
+                            } catch (_: RuntimeException) {
+                                null
+                            }
+                            if (amount == null || !TapeLimits.isSupportedNumber(amount)) {
+                                ok = false
+                                limitHit = limitHit || amount != null
                                 break
                             }
                             tmp.add(TapeLine.Entry(r.op, amount, r.pct, r.comment))
                         }
                         if (!ok) {
-                            warnMsgs.add("line ${idx + 1}: bad number, kept as comment")
+                            warnMsgs.add(
+                                "line ${idx + 1}: " +
+                                    if (limitHit) "number exceeds supported limits, kept as a comment"
+                                    else "bad number, kept as a comment",
+                            )
                             lines.add(TapeLine.Comment(ln))
                         } else {
                             lines.addAll(tmp)
@@ -137,10 +224,6 @@ object CalcFile {
             }
         }
 
-        // Post-pass: `+X`/`-X` directly after a separator is a balance
-        // restatement (kept signed, comment included). The evaluator always
-        // treats it as display-only and snaps it to the recomputed running
-        // total — stale mid-edit values heal instead of inflating.
         val fixed = lines.mapIndexed { i, l ->
             if (l is TapeLine.Entry && (l.op == '+' || l.op == '-') && !l.isPercent &&
                 i > 0 && lines[i - 1] is TapeLine.Separator
@@ -152,16 +235,14 @@ object CalcFile {
         return TapeDoc(meta, fixed, warnMsgs)
     }
 
-    /**
-     * Canonical writer. [balances] supplies the evaluated running total for each
-     * [TapeLine.Balance] in order (see [TapeEvaluator.subtotals]); entries and
-     * comments round-trip verbatim.
-     *
-     * Trailing blank lines are normalized to exactly two, so export is
-     * idempotent: `parse(write(d))` re-exports byte-identically.
-     */
-    fun write(doc: TapeDoc, balances: List<java.math.BigDecimal>): String {
-        val m = doc.meta
+    fun write(doc: TapeDoc, balanceTotals: Map<Int, BigDecimal>): String =
+        writeInternal(doc, balanceTotals)
+
+    private fun writeInternal(
+        doc: TapeDoc,
+        balanceTotals: Map<Int, BigDecimal>,
+    ): String {
+        val m = sanitizedMeta(doc.meta)
         val header = listOf(
             HEADER_OPEN,
             "CARETLINE=${m.caretLine}",
@@ -178,15 +259,49 @@ object CalcFile {
             HEADER_CLOSE,
         )
         val body = mutableListOf<String>()
-        var bi = 0
         val core = doc.lines.dropLastWhile { it is TapeLine.Blank }
-        for (line in core) {
+        var estimatedSize = TapeLimits.utf8Size(header.joinToString("\n")) + 16L
+        for ((index, line) in core.withIndex()) {
+            val amountSize = when (line) {
+                is TapeLine.Entry -> TapeLimits.estimatedAmountChars(
+                    line.amount,
+                    m.decimals,
+                    line.isPercent,
+                    true,
+                    m.decSep,
+                    m.thouSep,
+                )
+                is TapeLine.Balance -> {
+                    val value = balanceTotals[index] ?: line.value
+                    TapeLimits.estimatedAmountChars(
+                        value,
+                        m.decimals,
+                        false,
+                        false,
+                        m.decSep,
+                        m.thouSep,
+                    )
+                }
+                else -> 0L
+            }
+            val rawSize = when (line) {
+                is TapeLine.Entry -> TapeLimits.utf8Size(line.comment) + AMOUNT_WIDTH + 4L
+                is TapeLine.Balance -> TapeLimits.utf8Size(line.comment) + AMOUNT_WIDTH + 4L
+                is TapeLine.Heading -> TapeLimits.utf8Size(line.raw) + 1L
+                is TapeLine.Comment -> TapeLimits.utf8Size(line.raw) + 1L
+                TapeLine.Separator -> TapeLimits.utf8Size(SEPARATOR) + 1L
+                TapeLine.Blank -> 1L
+            }
+            estimatedSize += amountSize + 8L + rawSize
+            TapeLimits.ensureRenderedBudget(estimatedSize)
+        }
+        for ((index, line) in core.withIndex()) {
             when (line) {
                 is TapeLine.Entry -> body.add(formatEntry(line.op, line.amount, line.isPercent, line.comment, m))
                 is TapeLine.Separator -> body.add(SEPARATOR)
                 is TapeLine.Balance -> {
-                    val v = balances.getOrNull(bi++) ?: line.value
-                    body.add(formatEntry('+', v, false, line.comment, m))
+                    val v = balanceTotals[index] ?: line.value
+                    body.add(formatBalance(v, line.comment, m))
                 }
                 is TapeLine.Blank -> body.add("")
                 is TapeLine.Heading -> body.add(line.raw)
@@ -195,57 +310,119 @@ object CalcFile {
         }
         body.add("")
         body.add("")
-        return (header + body).joinToString("\n") + "\n"
+        val result = (header + body).joinToString("\n") + "\n"
+        TapeLimits.ensureRenderedTextBudget(result)
+        return result
     }
 
-    /** ` +         45.00000 hdfc` — 1 space, op, 17-wide amount, space, comment.
-     * Negative `+X` renders as `- X` (and `-(-X)` as `+ X`) so the operator
-     * column only ever carries the sign and columns stay aligned. */
-    fun formatEntry(op: Char, amount: java.math.BigDecimal, isPercent: Boolean, comment: String, meta: CalcMeta): String {
+    fun formatEntry(
+        op: Char,
+        amount: BigDecimal,
+        isPercent: Boolean,
+        comment: String,
+        meta: CalcMeta,
+    ): String = formatEntryInternal(op, amount, isPercent, comment, meta, true)
+
+    fun formatBalance(amount: BigDecimal, comment: String, meta: CalcMeta): String =
+        formatEntryInternal('+', amount, false, comment, meta, false)
+
+    private fun sanitizedMeta(meta: CalcMeta): CalcMeta {
+        val decSep = if (meta.decSep.isISOControl()) '.' else meta.decSep
+        var thouSep = if (meta.thouSep.isISOControl()) ',' else meta.thouSep
+        if (thouSep == decSep) thouSep = if (decSep == ',') '.' else ','
+        val uuid = meta.uuid.filterNot { it.isISOControl() }.take(128)
+        return meta.copy(
+            decimals = TapeLimits.safeDecimals(meta.decimals),
+            decSep = decSep,
+            thouSep = thouSep,
+            uuid = uuid.ifBlank { java.util.UUID.randomUUID().toString() },
+            caretLine = meta.caretLine.coerceIn(0, TapeLimits.MAX_LINES),
+            caretOffset = meta.caretOffset.coerceIn(0, TapeLimits.MAX_LINE_CHARS),
+        )
+    }
+
+    private fun formatEntryInternal(
+        op: Char,
+        amount: BigDecimal,
+        isPercent: Boolean,
+        comment: String,
+        meta: CalcMeta,
+        preserveScale: Boolean,
+    ): String {
+        val safeMeta = sanitizedMeta(meta)
         val (dop, abs) = TapeFormatter.displayParts(op, amount)
-        var digits = abs.setScale(meta.decimals, RoundingMode.HALF_UP).toPlainString()
-        if (meta.decSep != '.') digits = digits.replace('.', meta.decSep)
-        if (isPercent) digits += "%"
-        return " " + dop + digits.padStart(AMOUNT_WIDTH) + " " + comment.trim()
+        val digits = TapeFormatter.formatAmount(abs, safeMeta.decimals, isPercent, preserveScale)
+            .replace('.', safeMeta.decSep)
+        return " " + dop + digits.padStart(AMOUNT_WIDTH) + " " + comment
     }
 
-    private fun normalizeNumber(raw: String, meta: CalcMeta): String {
-        // Arabic decimal/grouping separators first (unambiguous).
+    private fun normalizeNumber(raw: String, meta: CalcMeta): String? {
         val arabic = raw.replace("٬", "").replace("٫", ".")
         val nospace = asciiDigits(arabic).replace(" ", "")
+        if (nospace.isEmpty() || meta.decSep == meta.thouSep) return null
+        val exponentIndex = nospace.indexOfFirst { it == 'e' || it == 'E' }
+        val mantissa = if (exponentIndex >= 0) nospace.substring(0, exponentIndex) else nospace
+        val exponent = if (exponentIndex >= 0) nospace.substring(exponentIndex) else ""
+        if (exponent.isNotEmpty() && !exponent.matches(Regex("[eE][+-]?[0-9]+"))) return null
+        val sign = if (mantissa.startsWith("+") || mantissa.startsWith("-")) mantissa.take(1) else ""
+        val unsigned = if (sign.isNotEmpty()) mantissa.drop(1) else mantissa
+        if (unsigned.isEmpty()) return null
+
+        fun digitsOnly(value: String): Boolean = value.isNotEmpty() && value.all { it in '0'..'9' }
+        fun validGrouping(value: String, separator: Char): Boolean {
+            val parts = value.split(separator)
+            if (parts.size == 1) return digitsOnly(value)
+            if (parts.any { it.isEmpty() || it.any { ch -> ch !in '0'..'9' } }) return false
+            val western = parts.first().length in 1..3 && parts.drop(1).all { it.length == 3 }
+            val indian = parts.last().length == 3 && parts.dropLast(1).all { it.length == 2 } &&
+                parts.first().length in 1..3
+            return western || indian
+        }
+
         if (meta.decSep == '.' && meta.thouSep == ',') {
-            // Default/US meta, smart comma handling:
-            // - "3,50" or German "1.234,56" (comma + trailing digits) use the
-            //   comma as the decimal point (fixes 100x silent errors);
-            // - anything else treats commas as grouping ("1,000" -> 1000,
-            //   "10,00,000" -> 1000000, "1,2,3" -> 123).
-            // Known trade-off: ambiguous "1,00" reads as 1.00, not 100.
-            if (nospace.matches(Regex("""^\d+,\d{1,2}$""")) ||
-                nospace.matches(Regex("""^\d{1,3}(\.\d{3})+,\d+$"""))
-            ) {
-                return nospace.replace(".", "").replace(",", ".")
+            if (unsigned.contains(',')) {
+                if (unsigned.contains('.')) {
+                    val cut = unsigned.lastIndexOf('.')
+                    if (cut <= 0 || cut == unsigned.lastIndex ||
+                        !validGrouping(unsigned.substring(0, cut), ',') ||
+                        !digitsOnly(unsigned.substring(cut + 1))) return null
+                    return sign + unsigned.substring(0, cut).replace(",", "") + "." +
+                        unsigned.substring(cut + 1) + exponent
+                }
+                val parts = unsigned.split(',')
+                if (parts.size == 2 && parts[1].length in 1..2 && digitsOnly(unsigned.replace(",", ""))) {
+                    return sign + parts[0] + "." + parts[1] + exponent
+                }
+                if (unsigned.startsWith("0,") && parts.size == 2 && parts[1].length == 3) return null
+                if (!validGrouping(unsigned, ',')) return null
+                return sign + unsigned.replace(",", "") + exponent
             }
-            return nospace.replace(",", "")
+            if (unsigned.count { it == '.' } > 1) return null
+            val cut = unsigned.indexOf('.')
+            if (cut == unsigned.lastIndex) return null
+            if (cut > 0 && !digitsOnly(unsigned.substring(0, cut))) return null
+            if (cut >= 0 && !digitsOnly(unsigned.substring(cut + 1))) return null
+            return sign + unsigned + exponent
         }
-        if (meta.decSep != '.') {
-            // Explicit foreign separators (e.g. German file header): split on
-            // the LAST decimal separator so grouping chars never eat the
-            // fraction ("1.234,56" -> 1234.56, never 1.23456).
-            val cut = nospace.lastIndexOf(meta.decSep)
-            if (cut >= 0) {
-                val intPart = nospace.substring(0, cut).replace(meta.thouSep.toString(), "")
-                return intPart + "." + nospace.substring(cut + 1)
-            }
-            return nospace.replace(meta.thouSep.toString(), "")
+
+        if (unsigned.contains(meta.decSep)) {
+            val cut = unsigned.lastIndexOf(meta.decSep)
+            if (cut <= 0 || cut == unsigned.lastIndex ||
+                !validGrouping(unsigned.substring(0, cut), meta.thouSep) ||
+                !digitsOnly(unsigned.substring(cut + 1))) return null
+            return sign + unsigned.substring(0, cut).replace(meta.thouSep.toString(), "") + "." +
+                unsigned.substring(cut + 1) + exponent
         }
-        return nospace.replace(meta.thouSep.toString(), "")
+        if (unsigned.contains(meta.thouSep)) {
+            if (!validGrouping(unsigned, meta.thouSep)) return null
+            return sign + unsigned.replace(meta.thouSep.toString(), "") + exponent
+        }
+        if (!digitsOnly(unsigned)) return null
+        return sign + unsigned + exponent
     }
 
     private data class RawEntry(val op: Char, val num: String, val pct: Boolean, val comment: String)
 
-    /** Unicode decimal-digit block starts (Devanagari, Bengali, Gurmukhi,
-     * Gujarati, Oriya, Tamil, Telugu, Kannada, Malayalam, Arabic-Indic,
-     * Extended Arabic-Indic, fullwidth) mapped onto ASCII 0-9. */
     private val DIGIT_BASES = intArrayOf(
         0x0966, 0x09E6, 0x0A66, 0x0AE6, 0x0B66, 0x0BE6, 0x0C66, 0x0CE6, 0x0D66,
         0x0660, 0x06F0, 0xFF10,
@@ -271,59 +448,48 @@ object CalcFile {
         return sb.toString()
     }
 
-    /**
-     * Split an entry line on inline `op number` boundaries (CalcTape behavior:
-     * an operator behind a number starts the next calculation line, even in the
-     * middle of the comment), so ABC-typed `+ 100 + 20` — or even `100+5` —
-     * works exactly like the calculator keys. Returns null when the line
-     * doesn't start with an operator or a digit (pure text stays a comment).
-     */
-    private fun tokenizeEntryLine(trimmed: String): List<RawEntry>? {
-        if (trimmed.isEmpty()) return null
-        // Lookalike operators from other keyboards/clipboards (× ÷ − –);
-        // em-dash is prose punctuation and stays untouched.
-        var line = trimmed
+    private fun commentPart(value: String): String = value.trimStart()
+
+    private fun tokenizeEntryLine(raw: String): List<RawEntry>? {
+        var line = raw.trimStart()
             .replace('×', '*').replace('÷', '/').replace('−', '-').replace('–', '-')
             .replaceFirst(currencyLeadRe, "")
         if (line.isEmpty()) return null
-        var rest: String
         var op: Char
         val first = line[0]
         val explicitOp = first == '+' || first == '-' || first == '*' || first == '/' || first == '^'
         if (explicitOp) {
             op = first
-            // Currency may also hug the number ("+ ₹500").
-            rest = line.substring(1).replaceFirst(currencyLeadRe, "").trimStart()
+            line = line.substring(1).replaceFirst(currencyLeadRe, "").trimStart()
         } else if (headNumRe.matchAt(line, 0) != null) {
-            // Bare number, leading-dot and scientific forms included.
             op = '+'
-            rest = line
         } else {
             return null
         }
-        val head = headNumRe.matchAt(rest, 0)
+        if (line.isEmpty()) return null
+        val head = headNumRe.matchAt(line, 0)
         if (head == null) {
-            // Alphabetic text where a number belongs (`+ abc`): keep the row
-            // with a neutral identity amount (0 for +/-, 1 for *//^) and treat
-            // everything — including the non-number — as its comment. Silent.
-            if (rest.trim().isEmpty()) return null
             val identity = if (op == '*' || op == '/' || op == '^') "1" else "0"
-            return listOf(RawEntry(op, identity, false, rest.trim()))
+            return listOf(RawEntry(op, identity, false, line))
         }
+        val next = line.getOrNull(head.range.last + 1)
+        if ((next == '.' || next == ',' || next == 'e' || next == 'E') &&
+            line.substring(head.range.last + 1).isNotBlank()
+        ) return null
         val out = mutableListOf<RawEntry>()
         var curOp = op
         var curNum = head.groupValues[1]
         var curPct = head.groupValues[2] == "%"
         var cursor = head.range.last + 1
         while (true) {
-            val m = splitRe.find(rest, cursor) ?: break
-            out.add(RawEntry(curOp, curNum, curPct, rest.substring(cursor, m.range.first).trim()))
+            val m = splitRe.find(line, cursor) ?: break
+            out.add(RawEntry(curOp, curNum, curPct, commentPart(line.substring(cursor, m.range.first))))
             curOp = m.groupValues[1][0]
             curNum = m.groupValues[2]
             curPct = m.groupValues[3] == "%"
             cursor = m.range.last + 1
         }
-        out.add(RawEntry(curOp, curNum, curPct, rest.substring(cursor).trim()))
+        out.add(RawEntry(curOp, curNum, curPct, commentPart(line.substring(cursor))))
         return out
     }
 }

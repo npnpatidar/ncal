@@ -20,12 +20,21 @@ data class AppSettings(
     val grouping: Grouping = Grouping.OFF,
     val tapeFontSp: Float = 16f,
     val keyFontSp: Float = 18f,
-    val keyHeightPortDp: Float = 40f,
-    val keyHeightLandDp: Float = 40f,
+    val keyHeightPortDp: Float = 48f,
+    val keyHeightLandDp: Float = 48f,
     val haptics: Boolean = true,
     val keySound: Boolean = true,
     val noteSort: NoteSort = NoteSort.DATE,
-)
+) {
+    fun sanitized(): AppSettings = copy(
+        decimals = decimals.coerceIn(0, 8),
+        indent = indent.coerceIn(1, 8),
+        tapeFontSp = tapeFontSp.takeIf { it.isFinite() }?.coerceIn(6f, 32f) ?: 16f,
+        keyFontSp = keyFontSp.takeIf { it.isFinite() }?.coerceIn(12f, 28f) ?: 18f,
+        keyHeightPortDp = keyHeightPortDp.takeIf { it.isFinite() }?.coerceIn(48f, 80f) ?: 48f,
+        keyHeightLandDp = keyHeightLandDp.takeIf { it.isFinite() }?.coerceIn(48f, 64f) ?: 48f,
+    )
+}
 
 class SettingsStore(private val context: Context) {
 
@@ -33,20 +42,21 @@ class SettingsStore(private val context: Context) {
         val p = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
         return AppSettings(
             themeMode = enumOf<ThemeMode>(p, K_THEME, ThemeMode.SYSTEM),
-            decimals = p.getInt(K_DEC, 5).coerceIn(0, 8),
-            indent = p.getInt(K_INDENT, 2).coerceIn(1, 8),
+            decimals = readInt(p, K_DEC, 5),
+            indent = readInt(p, K_INDENT, 2),
             grouping = enumOf<Grouping>(p, K_GROUP, Grouping.OFF),
-            tapeFontSp = p.getFloat(K_TAPE_FONT, 16f).coerceIn(6f, 32f),
-            keyFontSp = p.getFloat(K_KEY_FONT, 18f).coerceIn(12f, 28f),
-            keyHeightPortDp = p.getFloat(K_KEY_H_PORT, 40f).coerceIn(20f, 80f),
-            keyHeightLandDp = p.getFloat(K_KEY_H_LAND, 40f).coerceIn(20f, 64f),
-            haptics = p.getBoolean(K_HAPTIC, true),
-            keySound = p.getBoolean(K_SOUND, true),
+            tapeFontSp = readFloat(p, K_TAPE_FONT, 16f),
+            keyFontSp = readFloat(p, K_KEY_FONT, 18f),
+            keyHeightPortDp = readFloat(p, K_KEY_H_PORT, 48f),
+            keyHeightLandDp = readFloat(p, K_KEY_H_LAND, 48f),
+            haptics = readBoolean(p, K_HAPTIC, true),
+            keySound = readBoolean(p, K_SOUND, true),
             noteSort = enumOf<NoteSort>(p, K_SORT, NoteSort.DATE),
-        )
+        ).sanitized()
     }
 
-    fun save(s: AppSettings) {
+    fun save(settings: AppSettings) {
+        val s = settings.sanitized()
         try {
             context.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit {
                 putString(K_THEME, s.themeMode.name)
@@ -66,13 +76,31 @@ class SettingsStore(private val context: Context) {
         }
     }
 
+    private fun readInt(p: android.content.SharedPreferences, key: String, fallback: Int): Int = try {
+        p.getInt(key, fallback)
+    } catch (_: Throwable) {
+        fallback
+    }
+
+    private fun readFloat(p: android.content.SharedPreferences, key: String, fallback: Float): Float = try {
+        p.getFloat(key, fallback)
+    } catch (_: Throwable) {
+        fallback
+    }
+
+    private fun readBoolean(p: android.content.SharedPreferences, key: String, fallback: Boolean): Boolean = try {
+        p.getBoolean(key, fallback)
+    } catch (_: Throwable) {
+        fallback
+    }
+
     private inline fun <reified T : Enum<T>> enumOf(
         p: android.content.SharedPreferences,
         key: String,
         fallback: T,
     ): T {
         return try {
-            java.lang.Enum.valueOf(T::class.java, p.getString(key, fallback.name))
+            java.lang.Enum.valueOf(T::class.java, p.getString(key, fallback.name) ?: fallback.name)
         } catch (_: Throwable) {
             fallback
         }

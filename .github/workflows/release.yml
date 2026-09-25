@@ -1,0 +1,201 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (for example, 1.2.3)"
+        required: true
+        type: string
+      version_code:
+        description: "Explicit Android version code (1-2100000000)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+jobs:
+  bundle:
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    environment: release
+    runs-on: ubuntu-24.04
+    env:
+      EVENT_NAME: ${{ github.event_name }}
+      RELEASE_TAG: ${{ github.ref_name }}
+      DISPATCH_VERSION: ${{ inputs.version }}
+      VERSION_CODE: ${{ inputs.version_code || secrets.RELEASE_VERSION_CODE }}
+      SOURCE_SHA: ${{ github.sha }}
+      EXPECTED_CERT_SHA256: ${{ secrets.RELEASE_CERT_SHA256 }}
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@017a9effdb900e5b5b2fddfb590a105619dca3c3
+      - name: Install Android platform
+        shell: bash
+        run: |
+          set -eu
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager --install "platforms;android-37" "build-tools;37.0.0"
+      - name: Validate release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          semver_pattern='(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?'
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ ! "$DISPATCH_VERSION" =~ ^v?${semver_pattern}$ ]]; then
+              printf '%s\n' "workflow_dispatch version must be a valid semantic version" >&2
+              exit 1
+            fi
+            version="${DISPATCH_VERSION#v}"
+          else
+            if [[ ! "$RELEASE_TAG" =~ ^v${semver_pattern}$ ]]; then
+              printf '%s\n' "release tag must be vMAJOR.MINOR.PATCH with optional prerelease/build metadata" >&2
+              exit 1
+            fi
+            version="${RELEASE_TAG#v}"
+          fi
+          if [[ ! "$version" =~ ^${semver_pattern}$ ]]; then
+            printf '%s\n' "release version failed semantic validation" >&2
+            exit 1
+          fi
+          if [[ ! "$VERSION_CODE" =~ ^[1-9][0-9]{0,9}$ ]] || (( 10#$VERSION_CODE > 2100000000 )); then
+            printf '%s\n' "an explicit Android version code between 1 and 2100000000 is required" >&2
+            exit 1
+          fi
+          printf 'RELEASE_VERSION=%s\n' "$version" >> "$GITHUB_ENV"
+      - name: Decode release signing key
+        env:
+          KEYSTORE: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          KEYSTORE_PATH: ${{ runner.temp }}/release.jks
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          if [[ -z "$KEYSTORE" ]]; then
+            printf '%s\n' "release signing keystore is required" >&2
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE" | base64 --decode > "$KEYSTORE_PATH"
+          if [[ ! -s "$KEYSTORE_PATH" ]]; then
+            printf '%s\n' "release signing keystore is empty" >&2
+            exit 1
+          fi
+      - name: Verify release certificate
+        env:
+          KEYSTORE_PATH: ${{ runner.temp }}/release.jks
+          STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$EXPECTED_CERT_SHA256" =~ ^[0-9A-Fa-f]{64}$ ]]; then
+            printf '%s\n' "RELEASE_CERT_SHA256 must be a 64-character SHA-256 fingerprint" >&2
+            exit 1
+          fi
+          if [[ -z "$STORE_PASSWORD" || -z "$KEY_ALIAS" ]]; then
+            printf '%s\n' "release certificate verification secrets are required" >&2
+            exit 1
+          fi
+          fingerprint_line="$(keytool -exportcert \
+            -alias "$KEY_ALIAS" \
+            -keystore "$KEYSTORE_PATH" \
+            -storepass:env STORE_PASSWORD \
+            -rfc | openssl x509 -noout -fingerprint -sha256)"
+          actual_fingerprint="${fingerprint_line##*=}"
+          actual_fingerprint="${actual_fingerprint//:/}"
+          actual_fingerprint="${actual_fingerprint^^}"
+          if [[ "$actual_fingerprint" != "${EXPECTED_CERT_SHA256^^}" ]]; then
+            printf '%s\n' "release signing certificate fingerprint does not match the protected value" >&2
+            exit 1
+          fi
+      - name: Build release bundle
+        env:
+          STORE_PATH: ${{ runner.temp }}/release.jks
+          STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -s "$STORE_PATH" || -z "$STORE_PASSWORD" || -z "$KEY_ALIAS" || -z "$KEY_PASSWORD" ]]; then
+            printf '%s\n' "release signing secrets are required" >&2
+            exit 1
+          fi
+          args=(
+            :app:bundleRelease
+            :app:lintRelease
+            "-PappVersionCode=$VERSION_CODE"
+            "-PappVersionName=$RELEASE_VERSION"
+            "-PreleaseStoreFile=$STORE_PATH"
+            "-PreleaseStorePassword=$STORE_PASSWORD"
+            "-PreleaseKeyAlias=$KEY_ALIAS"
+            "-PreleaseKeyPassword=$KEY_PASSWORD"
+          )
+          ./gradlew "${args[@]}" --stacktrace
+      - name: Create release provenance and checksum
+        env:
+          BUNDLE_GLOB: app/build/outputs/bundle/release/*.aab
+          CHECKSUM_PATH: app/build/outputs/bundle/release/ncal-release.sha256
+          PROVENANCE_PATH: app/build/outputs/bundle/release/ncal-release.provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t bundles < <(compgen -G "$BUNDLE_GLOB" || true)
+          if [[ "${#bundles[@]}" -ne 1 || ! -s "${bundles[0]}" ]]; then
+            printf '%s\n' "exactly one non-empty release bundle is required" >&2
+            exit 1
+          fi
+          bundle_path="${bundles[0]}"
+          artifact_dir="$(dirname -- "$bundle_path")"
+          artifact_name="$(basename -- "$bundle_path")"
+          checked_out_sha="$(git rev-parse --verify HEAD)"
+          if [[ "$checked_out_sha" != "$SOURCE_SHA" ]]; then
+            printf '%s\n' "checked out source does not match the release source" >&2
+            exit 1
+          fi
+          checksum="$(cd -- "$artifact_dir" && sha256sum -- "$artifact_name")"
+          printf '%s\n' "$checksum" > "$CHECKSUM_PATH"
+          {
+            printf 'source_sha=%s\n' "$SOURCE_SHA"
+            printf 'release_tag=%s\n' "$RELEASE_TAG"
+            printf 'release_version=%s\n' "$RELEASE_VERSION"
+            printf 'version_code=%s\n' "$VERSION_CODE"
+            printf 'artifact=%s\n' "$artifact_name"
+            printf 'sha256=%s\n' "${checksum%% *}"
+          } > "$PROVENANCE_PATH"
+      - name: Attest release bundle
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-path: app/build/outputs/bundle/release/*.aab
+      - name: Upload release bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ncal-release-bundle
+          path: |
+            app/build/outputs/bundle/release/*.aab
+            app/build/outputs/bundle/release/*.sha256
+            app/build/outputs/bundle/release/*.provenance
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload mapping
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ncal-release-mapping
+          path: app/build/outputs/mapping/release/mapping.txt
+          if-no-files-found: error
+          retention-days: 90

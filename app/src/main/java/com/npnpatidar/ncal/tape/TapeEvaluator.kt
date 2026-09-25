@@ -1,57 +1,29 @@
 package com.npnpatidar.ncal.tape
 
 import java.math.BigDecimal
+import java.math.BigInteger
 import java.math.MathContext
 import java.math.RoundingMode
-import kotlin.math.pow
 
-/** Per-line outcome: a line's own contribution, or an error if it can't be computed. */
-data class LineResult(val index: Int, val value: BigDecimal?, val error: String?)
+ data class LineResult(val index: Int, val value: BigDecimal?, val error: String?)
 
 data class EvalResult(
     val lineResults: List<LineResult>,
-    /** Running total captured at each [TapeLine.Separator], in order. */
     val subtotals: List<BigDecimal>,
-    /** Sum of independent sections (blank-line separated); equals running total if no blanks. */
     val grandTotal: BigDecimal,
-    /** Running total of the currently open (last) section. */
     val openTotal: BigDecimal,
-    /**
-     * Running total just BEFORE each [TapeLine.Balance] line (by doc index).
-     * Drives live display refresh: the shown subtotal always tracks this.
-     */
     val balanceTotals: Map<Int, BigDecimal>,
-    /**
-     * Every independent section's total in order (blank-separated; the last
-     * entry is the currently open section). Sums to [grandTotal]. The strip
-     * shows the section under the cursor, like the reference tape.
-     */
     val sectionTotals: List<BigDecimal>,
     val errors: List<String>,
 )
 
-/**
- * Chain evaluator.
- *
- * - Entries accumulate into a running total; `* / ^` bind tighter than `+ -`
- *   across lines (`+10, +2, *3` = 16).
- * - `%` resolves against the running subtotal (base + current block so far).
- * - [TapeLine.Balance] lines are computed restatements: always display-only
- *   and snapped to the running total, never added (stale ones heal instead
- *   of inflating).
- * - [TapeLine.Blank] ends the section: the section total feeds the grand total and
- *   the running total resets (independent calculation, like CalcTape).
- * - Internally full BigDecimal precision (34-digit context); rounding to
- *   [decimals] with HALF_UP happens only for display.
- */
 object TapeEvaluator {
 
     val MC = MathContext(34, RoundingMode.HALF_UP)
-
-    /** Exponents beyond this are rejected: exact BigDecimal powers of huge
-     * exponents (e.g. `^ 99999999`) would hang or OOM the app from one line. */
     private const val MAX_EXP = 1000
+    private const val MAX_ROOT_DEGREE = 32
 
+    @Suppress("UNUSED_PARAMETER")
     fun evaluate(lines: List<TapeLine>, decimals: Int): EvalResult {
         val results = mutableListOf<LineResult>()
         val subtotals = mutableListOf<BigDecimal>()
@@ -66,7 +38,18 @@ object TapeEvaluator {
             val (delta, lineValues, errs) = evalBlock(block, running)
             errs.forEach { errors.add(it) }
             lineValues.forEach { (idx, v, err) -> results.add(LineResult(idx, v, err)) }
-            running = running.add(delta, MC)
+            if (!TapeLimits.isSupportedNumber(delta)) {
+                errors.add("calculation total exceeds supported limits")
+                running = BigDecimal.ZERO
+            } else {
+                val next = running.add(delta, MC)
+                if (TapeLimits.isSupportedNumber(next)) {
+                    running = next
+                } else {
+                    errors.add("running total exceeds supported limits")
+                    running = BigDecimal.ZERO
+                }
+            }
             block = mutableListOf()
         }
 
@@ -80,14 +63,6 @@ object TapeEvaluator {
                 }
                 is TapeLine.Balance -> {
                     flushBlock()
-                    // A `+X`/`-X` directly after a separator is a computed
-                    // restatement: ALWAYS display-only, never added — even
-                    // when stale (mid-edit). The shown value snaps to the
-                    // running total (balanceTotals) and patchBalances/pretty
-                    // rewrite the text, so editing an entry glides the total
-                    // instead of exploding it by re-adding old subtotals.
-                    // (Fresh input always arrives on its own Entry line:
-                    // the keypad never types onto the total row.)
                     balanceTotals[index] = running
                     results.add(LineResult(index, running, null))
                 }
@@ -103,41 +78,41 @@ object TapeEvaluator {
             }
         }
         flushBlock()
-        val grand = sectionTotals.fold(running) { acc, s -> acc.add(s, MC) }
-        return EvalResult(results, subtotals, grand, running, balanceTotals, sectionTotals + running, errors)
+        var grand = running
+        for (section in sectionTotals) {
+            val next = grand.add(section, MC)
+            if (TapeLimits.isSupportedNumber(next)) {
+                grand = next
+            } else {
+                errors.add("grand total exceeds supported limits")
+                grand = BigDecimal.ZERO
+                break
+            }
+        }
+        return EvalResult(
+            results.sortedBy { it.index },
+            subtotals,
+            grand,
+            running,
+            balanceTotals,
+            sectionTotals + running,
+            errors,
+        )
     }
 
     private data class IndexedEntry(val index: Int, val entry: TapeLine.Entry)
 
-    /**
-     * True when the tape has entries after the last separator/balance — i.e.
-     * there is an open block worth closing with `=`.
-     */
     fun hasOpenEntries(lines: List<TapeLine>): Boolean {
         val cut = lines.indexOfLast { it is TapeLine.Separator || it is TapeLine.Balance }
         return lines.drop(cut + 1).any { it is TapeLine.Entry }
     }
 
-    /**
-     * Which blank-separated section contains [lineIndex] (only blanks strictly
-     * before it count; a cursor sitting exactly on a divider belongs to the
-     * section above it).
-     */
     fun sectionIndexForLine(lines: List<TapeLine>, lineIndex: Int): Int {
         if (lines.isEmpty()) return 0
         val idx = lineIndex.coerceIn(0, lines.size - 1)
         return lines.take(idx).count { it is TapeLine.Blank }
     }
 
-    /**
-     * Returns (blockDelta, perLineValues, errors).
-     * Single pass: [sum] holds finished additive part, [cur] the open
-     * multiplicative chain (with its sign).
-     *
-     * A block opening with `*`, `/` or `^` chains onto the running total
-     * (`* 3` triples it, `/ 2` halves it) instead of erroring — on an empty
-     * tape the base is 0, so it quietly stays 0.
-     */
     private fun evalBlock(
         block: List<IndexedEntry>,
         base: BigDecimal,
@@ -147,49 +122,116 @@ object TapeEvaluator {
         var sum = BigDecimal.ZERO
         var cur = BigDecimal.ZERO
         var curSet = false
+        var chainIncludesBase = false
 
-        for ((entryIdx, ie) in block.withIndex()) {
+        fun chainValue(): BigDecimal = cur.subtract(base, MC)
+        fun lineChainValue(): BigDecimal = if (chainIncludesBase) chainValue() else cur
+
+        for (ie in block) {
             val index = ie.index
             val e = ie.entry
             val tag = "line ${index + 1}"
-            if (entryIdx == 0 && (e.op == '*' || e.op == '/' || e.op == '^')) {
+            if (!TapeLimits.isSupportedNumber(e.amount)) {
+                val msg = "$tag: number exceeds supported limits"
+                errs.add(msg)
+                lineValues.add(Triple(index, null, msg))
+                cur = base
+                chainIncludesBase = true
+                curSet = true
+                continue
+            }
+            if (!curSet && sum.compareTo(BigDecimal.ZERO) == 0 &&
+                (e.op == '*' || e.op == '/' || e.op == '^')
+            ) {
                 val factor = if (e.isPercent) e.amount.divide(BigDecimal(100), MC) else e.amount
                 if (e.op == '/' && factor.compareTo(BigDecimal.ZERO) == 0) {
                     val msg = "$tag: division by zero"
                     errs.add(msg)
                     lineValues.add(Triple(index, null, msg))
+                    cur = base
+                    chainIncludesBase = true
                     curSet = true
                     continue
                 }
                 if (e.op == '^') {
-                    val t = cappedPow(base, factor, tag, errs)
-                    if (t == null) {
-                        lineValues.add(Triple(index, null, errs.last()))
+                    val target = cappedPow(base, factor, tag, errs)
+                    if (target == null) {
+                        cur = base
+                        chainIncludesBase = true
+                        lineValues.add(Triple(index, null, errs.lastOrNull() ?: "$tag: invalid power"))
+                    } else if (TapeLimits.isSupportedNumber(target)) {
+                        cur = target
+                        chainIncludesBase = true
+                        lineValues.add(Triple(index, lineChainValue(), null))
                     } else {
-                        val delta = t.subtract(base, MC)
-                        lineValues.add(Triple(index, delta, null))
-                        cur = delta
+                        val msg = "$tag: number exceeds supported limits"
+                        errs.add(msg)
+                        cur = base
+                        chainIncludesBase = true
+                        lineValues.add(Triple(index, null, msg))
                     }
                     curSet = true
                     continue
                 }
-                val target = if (e.op == '*') base.multiply(factor, MC) else base.divide(factor, MC)
-                val delta = target.subtract(base, MC)
-                lineValues.add(Triple(index, delta, null))
-                cur = delta
+                val target = try {
+                    if (e.op == '*') base.multiply(factor, MC) else base.divide(factor, MC)
+                } catch (_: ArithmeticException) {
+                    val msg = "$tag: invalid operation"
+                    errs.add(msg)
+                    cur = base
+                    chainIncludesBase = true
+                    lineValues.add(Triple(index, null, msg))
+                    curSet = true
+                    continue
+                }
+                if (!TapeLimits.isSupportedNumber(target)) {
+                    val msg = "$tag: number exceeds supported limits"
+                    errs.add(msg)
+                    cur = base
+                    chainIncludesBase = true
+                    lineValues.add(Triple(index, null, msg))
+                } else {
+                    cur = target
+                    chainIncludesBase = true
+                    lineValues.add(Triple(index, lineChainValue(), null))
+                }
                 curSet = true
                 continue
             }
+
             when (e.op) {
                 '+', '-' -> {
                     sum = sum.add(cur, MC)
-                    cur = if (e.isPercent) {
-                        val resolved = percentOf(base.add(sum, MC), e.amount)
-                        lineValues.add(Triple(index, signed(e.op, resolved), null))
-                        signed(e.op, resolved)
+                    if (!TapeLimits.isSupportedNumber(sum)) {
+                        val msg = "$tag: subtotal exceeds supported limits"
+                        errs.add(msg)
+                        lineValues.add(Triple(index, null, msg))
+                        cur = BigDecimal.ZERO
                     } else {
-                        lineValues.add(Triple(index, signed(e.op, e.amount), null))
-                        signed(e.op, e.amount)
+                        chainIncludesBase = false
+                        cur = if (e.isPercent) {
+                            val percentBase = base.add(sum, MC)
+                            if (!TapeLimits.isSupportedNumber(percentBase)) {
+                                val msg = "$tag: subtotal exceeds supported limits"
+                                errs.add(msg)
+                                lineValues.add(Triple(index, null, msg))
+                                BigDecimal.ZERO
+                            } else {
+                                val resolved = percentOf(percentBase, e.amount)
+                                if (TapeLimits.isSupportedNumber(resolved)) {
+                                    lineValues.add(Triple(index, signed(e.op, resolved), null))
+                                    signed(e.op, resolved)
+                                } else {
+                                    val msg = "$tag: result exceeds supported limits"
+                                    errs.add(msg)
+                                    lineValues.add(Triple(index, null, msg))
+                                    BigDecimal.ZERO
+                                }
+                            }
+                        } else {
+                            lineValues.add(Triple(index, signed(e.op, e.amount), null))
+                            signed(e.op, e.amount)
+                        }
                     }
                     curSet = true
                 }
@@ -200,53 +242,44 @@ object TapeEvaluator {
                         lineValues.add(Triple(index, null, msg))
                         continue
                     }
-                    // A `%` behind `*`/`/`/`^` is a pure fraction of 1, NOT
-                    // resolved against the running subtotal: `* 19%` means
-                    // ×0.19 (so `+ 100 * 19%` is 19, not 1900) and `^ 50%`
-                    // means ^0.5 (square root). This matches the block-leading
-                    // path, which always used the pure fraction.
-                    if (e.isPercent) {
-                        val factor = e.amount.divide(BigDecimal(100), MC)
-                        if (e.op == '/' && factor.compareTo(BigDecimal.ZERO) == 0) {
-                            val msg = "$tag: division by zero"
-                            errs.add(msg)
-                            lineValues.add(Triple(index, null, msg))
-                            continue
-                        }
-                        if (e.op == '^') {
-                            val t = cappedPow(cur, factor, tag, errs)
-                            if (t == null) {
-                                lineValues.add(Triple(index, null, errs.last()))
-                            } else {
-                                cur = t
-                                lineValues.add(Triple(index, cur, null))
-                            }
-                            continue
-                        }
-                        cur = if (e.op == '*') cur.multiply(factor, MC) else cur.divide(factor, MC)
-                        lineValues.add(Triple(index, cur, null))
+                    val factor = if (e.isPercent) e.amount.divide(BigDecimal(100), MC) else e.amount
+                    if (e.op == '/' && factor.compareTo(BigDecimal.ZERO) == 0) {
+                        val msg = "$tag: division by zero"
+                        errs.add(msg)
+                        lineValues.add(Triple(index, null, msg))
                         continue
                     }
-                    val rhs = e.amount
-                    lineValues.add(Triple(index, rhs, null))
-                    cur = when (e.op) {
-                        '*' -> cur.multiply(rhs, MC)
-                        '/' -> {
-                            if (rhs.compareTo(BigDecimal.ZERO) == 0) {
-                                val msg = "$tag: division by zero"
-                                errs.add(msg)
-                                lineValues[lineValues.lastIndex] =
-                                    Triple(index, null, msg)
-                                cur // keep previous chain value
-                            } else cur.divide(rhs, MC)
+                    if (e.op == '^') {
+                        val target = cappedPow(cur, factor, tag, errs)
+                        if (target == null || !TapeLimits.isSupportedNumber(target)) {
+                            val msg = if (target == null) errs.lastOrNull() ?: "$tag: invalid power"
+                            else "$tag: number exceeds supported limits"
+                            if (target != null) errs.add(msg)
+                            lineValues.add(Triple(index, null, msg))
+                        } else {
+                            cur = target
+                            lineValues.add(Triple(index, lineChainValue(), null))
                         }
-                        else -> {
-                            val t = cappedPow(cur, rhs, tag, errs)
-                            if (t == null) {
-                                lineValues[lineValues.lastIndex] = Triple(index, null, errs.last())
-                            }
-                            t ?: cur
+                        continue
+                    }
+                    val target = try {
+                        when (e.op) {
+                            '*' -> cur.multiply(factor, MC)
+                            else -> cur.divide(factor, MC)
                         }
+                    } catch (_: ArithmeticException) {
+                        errs.add("$tag: invalid operation")
+                        null
+                    }
+                    if (target == null) {
+                        lineValues.add(Triple(index, null, "$tag: invalid operation"))
+                    } else if (!TapeLimits.isSupportedNumber(target)) {
+                        val msg = "$tag: number exceeds supported limits"
+                        errs.add(msg)
+                        lineValues.add(Triple(index, null, msg))
+                    } else {
+                        cur = target
+                        lineValues.add(Triple(index, lineChainValue(), null))
                     }
                 }
                 else -> {
@@ -256,23 +289,35 @@ object TapeEvaluator {
                 }
             }
         }
-        return Triple(sum.add(cur, MC), lineValues, errs)
+        val chainDelta = try {
+            if (chainIncludesBase) chainValue() else cur
+        } catch (_: ArithmeticException) {
+            errs.add("calculation total exceeds supported limits")
+            return Triple(BigDecimal.ZERO, lineValues, errs)
+        }
+        if (!TapeLimits.isSupportedNumber(sum) || !TapeLimits.isSupportedNumber(chainDelta)) {
+            errs.add("calculation total exceeds supported limits")
+            return Triple(BigDecimal.ZERO, lineValues, errs)
+        }
+        val total = try {
+            sum.add(chainDelta, MC)
+        } catch (_: ArithmeticException) {
+            errs.add("calculation total exceeds supported limits")
+            BigDecimal.ZERO
+        }
+        if (!TapeLimits.isSupportedNumber(total)) {
+            errs.add("calculation total exceeds supported limits")
+            return Triple(BigDecimal.ZERO, lineValues, errs)
+        }
+        return Triple(total, lineValues, errs)
     }
 
     private fun signed(op: Char, v: BigDecimal): BigDecimal =
         if (op == '-') v.negate() else v
 
-    /** `pct` percent of [base]: base * pct / 100. */
     private fun percentOf(base: BigDecimal, pct: BigDecimal): BigDecimal =
         base.multiply(pct, MC).divide(BigDecimal(100), MC)
 
-    /**
-     * Capped, crash-safe power for `^` lines. Rejects |exponent| > MAX_EXP
-     * (exact giant powers would hang or OOM the app from one typed line) and
-     * converts non-finite outcomes (`0^-1`, negative fractional powers like
-     * `(-8)^0.333`) into recorded errors instead of throwing out of
-     * evaluation. Returns null on failure (error already recorded).
-     */
     private fun cappedPow(
         base: BigDecimal,
         exp: BigDecimal,
@@ -283,28 +328,151 @@ object TapeEvaluator {
             errs.add("$tag: exponent too large (max $MAX_EXP)")
             return null
         }
-        return try {
-            val ei = exp.intValueExact()
-            if (ei >= 0) base.pow(ei, MC) else doublePow(base, ei.toDouble(), tag, errs)
+        val integer = try {
+            exp.intValueExact()
         } catch (_: ArithmeticException) {
-            doublePow(base, exp.toDouble(), tag, errs)
+            null
+        }
+        if (integer != null) {
+            return try {
+                if (integer >= 0) {
+                    base.pow(integer, MC)
+                } else {
+                    if (base.compareTo(BigDecimal.ZERO) == 0) {
+                        errs.add("$tag: invalid power (zero raised to a negative exponent)")
+                        null
+                    } else {
+                        BigDecimal.ONE.divide(base.pow(-integer, MC), MC)
+                    }
+                }
+            } catch (t: Throwable) {
+                errs.add("$tag: invalid power (${t.message})")
+                null
+            }
+        }
+        return decimalPow(base, exp, tag, errs)
+    }
+
+    private fun decimalPow(
+        base: BigDecimal,
+        exp: BigDecimal,
+        tag: String,
+        errs: MutableList<String>,
+    ): BigDecimal? {
+        val fraction = rational(exp)
+        if (fraction == null) {
+            errs.add("$tag: invalid power (unsupported fractional exponent)")
+            return null
+        }
+        var numerator = fraction.first
+        val denominator = fraction.second
+        if (numerator.signum() == 0) return BigDecimal.ONE
+        if (denominator > BigInteger.valueOf(MAX_ROOT_DEGREE.toLong()) ||
+            numerator.abs() > BigInteger.valueOf(MAX_EXP.toLong())
+        ) {
+            errs.add("$tag: invalid power (unsupported fractional exponent)")
+            return null
+        }
+        val negative = numerator.signum() < 0
+        if (negative) numerator = numerator.negate()
+        if (base.compareTo(BigDecimal.ZERO) == 0) {
+            if (negative) {
+                errs.add("$tag: invalid power (zero raised to a negative exponent)")
+                return null
+            }
+            return BigDecimal.ZERO
+        }
+        val degree = denominator.toInt()
+        if (base.signum() < 0 && (degree % 2 == 0 || !numerator.testBit(0))) {
+            errs.add("$tag: invalid power (negative base and fractional exponent)")
+            return null
+        }
+        val root = integerRoot(base.abs(), degree)
+        if (root == null) {
+            errs.add("$tag: invalid power (root did not converge)")
+            return null
+        }
+        var result = try {
+            root.pow(numerator.toInt(), MC)
         } catch (t: Throwable) {
             errs.add("$tag: invalid power (${t.message})")
+            return null
+        }
+        if (base.signum() < 0) result = result.negate()
+        if (negative) {
+            result = try {
+                BigDecimal.ONE.divide(result, MC)
+            } catch (t: Throwable) {
+                errs.add("$tag: invalid power (${t.message})")
+                return null
+            }
+        }
+        return if (TapeLimits.isSupportedNumber(result)) result else {
+            errs.add("$tag: number exceeds supported limits")
             null
         }
     }
 
-    private fun doublePow(
-        base: BigDecimal,
-        exp: Double,
-        tag: String,
-        errs: MutableList<String>,
-    ): BigDecimal? {
+    private fun rational(value: BigDecimal): Pair<BigInteger, BigInteger>? {
         return try {
-            BigDecimal(base.toDouble().pow(exp), MC)
-        } catch (t: Throwable) {
-            errs.add("$tag: invalid power (${t.message})")
+            val stripped = value.stripTrailingZeros()
+            val scale = stripped.scale()
+            val unscaled = stripped.unscaledValue()
+            val ten = BigDecimal.TEN.toBigIntegerExact()
+            val numerator: BigInteger
+            val denominator: BigInteger
+            if (scale >= 0) {
+                numerator = unscaled
+                denominator = ten.pow(scale)
+            } else {
+                numerator = unscaled.multiply(ten.pow(-scale))
+                denominator = BigInteger.ONE
+            }
+            val common = numerator.gcd(denominator)
+            if (common == BigInteger.ZERO) null else (numerator / common) to (denominator / common)
+        } catch (_: ArithmeticException) {
             null
+        }
+    }
+
+    private fun integerRoot(value: BigDecimal, degree: Int): BigDecimal? {
+        if (degree <= 1) return value
+        if (value.signum() == 0) return BigDecimal.ZERO
+        if (value.signum() < 0) return null
+        val adjusted = value.precision().toLong() - value.scale().toLong() - 1L
+        val exponent = Math.floorDiv(adjusted, degree.toLong())
+        var guess = BigDecimal.ONE.scaleByPowerOfTen(exponent.toInt())
+        if (guess.signum() == 0) guess = BigDecimal.ONE
+        val n = BigDecimal(degree.toLong())
+        val tolerance = BigDecimal.ONE.movePointLeft(MC.precision - 4)
+        repeat(256) {
+            val previous = guess
+            val denominator = previous.pow(degree - 1, MC)
+            val next = if (denominator.signum() == 0) {
+                previous
+            } else {
+                previous.multiply(BigDecimal(degree - 1L), MC)
+                    .add(value.divide(denominator, MC), MC)
+                    .divide(n, MC)
+            }
+            guess = next
+            val delta = next.subtract(previous).abs()
+            val reference = maxOf(previous.abs(), next.abs())
+            if (delta <= reference.multiply(tolerance) && rootVerified(next, value, degree)) {
+                return next
+            }
+        }
+        return if (rootVerified(guess, value, degree)) guess else null
+    }
+
+    private fun rootVerified(root: BigDecimal, value: BigDecimal, degree: Int): Boolean {
+        if (root.signum() <= 0) return false
+        return try {
+            val powered = root.pow(degree, MC)
+            val reference = maxOf(powered.abs(), value.abs())
+            powered.subtract(value).abs() <= reference.multiply(BigDecimal.ONE.movePointLeft(MC.precision - 4))
+        } catch (_: Throwable) {
+            false
         }
     }
 }

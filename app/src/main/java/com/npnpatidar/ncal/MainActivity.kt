@@ -16,8 +16,9 @@ class MainActivity : ComponentActivity() {
         // Edge-to-edge: the documented prerequisite for reliable IME insets,
         // so the pinned strip can ride exactly above the system keyboard.
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        // Crash handler first: any fatal after this point lands in
-        // Download/ncal/crash-<ts>.log with the full stack trace.
+        // Crash handler first: any fatal after this point is written through the
+        // export path (MediaStore Download/ncal on API 29+, app-private external
+        // files below that) as crash-<ts>.log, debug builds only.
         NcalLogger.installCrashHandler()
         NcalLogger.init(this)
         NcalLogger.i("App", "onCreate")

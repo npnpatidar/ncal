@@ -1,5 +1,7 @@
 package com.npnpatidar.ncal.ui
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -7,6 +9,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -16,31 +20,41 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import com.npnpatidar.ncal.settings.AppSettings
 import com.npnpatidar.ncal.settings.NoteSort
 import com.npnpatidar.ncal.settings.ThemeMode
 import com.npnpatidar.ncal.tape.Grouping
+import kotlin.math.roundToInt
 
-/**
- * Settings page (gear icon in the bottom bar): theme, decimals, indent,
- * thousands grouping, tape font + ruled lines, keypad sizing, haptics/sound,
- * and note sorting. Everything applies live.
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     settings: AppSettings,
     onUpdate: (AppSettings) -> Unit,
     onBack: () -> Unit,
+    snackbarHostState: SnackbarHostState,
 ) {
+    BackHandler(onBack = onBack)
     Scaffold(
         topBar = {
             TopAppBar(
@@ -52,6 +66,7 @@ fun SettingsScreen(
                 },
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { pad ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(pad).padding(horizontal = 16.dp),
@@ -91,48 +106,44 @@ fun SettingsScreen(
                     label = { it.first },
                 )
             }
-            item { Section("Notepad font size (${settings.tapeFontSp.toInt()}sp)") }
+            item { Section("Notepad font size (${settings.tapeFontSp.roundToInt()}sp)") }
             item {
-                Slider(
+                PersistedSlider(
                     value = settings.tapeFontSp,
-                    onValueChange = { onUpdate(settings.copy(tapeFontSp = it)) },
-                    valueRange = 6f..32f,
+                    range = 6f..32f,
+                    label = "Notepad font size",
+                    onCommit = { onUpdate(settings.copy(tapeFontSp = it)) },
                 )
             }
-            item { Section("Keypad font size (${settings.keyFontSp.toInt()}sp)") }
+            item { Section("Keypad font size (${settings.keyFontSp.roundToInt()}sp)") }
             item {
-                Slider(
+                PersistedSlider(
                     value = settings.keyFontSp,
-                    onValueChange = { onUpdate(settings.copy(keyFontSp = it)) },
-                    valueRange = 12f..28f,
+                    range = 12f..28f,
+                    label = "Keypad font size",
+                    onCommit = { onUpdate(settings.copy(keyFontSp = it)) },
                 )
             }
-            item { Section("Keyboard height portrait (${settings.keyHeightPortDp.toInt()}dp)") }
+            item { Section("Keyboard height portrait (${settings.keyHeightPortDp.roundToInt()}dp)") }
             item {
-                Slider(
+                PersistedSlider(
                     value = settings.keyHeightPortDp,
-                    onValueChange = { onUpdate(settings.copy(keyHeightPortDp = it)) },
-                    valueRange = 20f..80f,
+                    range = 48f..80f,
+                    label = "Keyboard height portrait",
+                    onCommit = { onUpdate(settings.copy(keyHeightPortDp = it)) },
                 )
             }
-            item { Section("Keyboard height landscape (${settings.keyHeightLandDp.toInt()}dp)") }
+            item { Section("Keyboard height landscape (${settings.keyHeightLandDp.roundToInt()}dp)") }
             item {
-                Slider(
+                PersistedSlider(
                     value = settings.keyHeightLandDp,
-                    onValueChange = { onUpdate(settings.copy(keyHeightLandDp = it)) },
-                    valueRange = 20f..64f,
+                    range = 48f..64f,
+                    label = "Keyboard height landscape",
+                    onCommit = { onUpdate(settings.copy(keyHeightLandDp = it)) },
                 )
             }
-            item {
-                SwitchRow("Haptic feedback on keys", settings.haptics) {
-                    onUpdate(settings.copy(haptics = it))
-                }
-            }
-            item {
-                SwitchRow("Keypress sound", settings.keySound) {
-                    onUpdate(settings.copy(keySound = it))
-                }
-            }
+            item { SwitchRow("Haptic feedback on keys", settings.haptics) { onUpdate(settings.copy(haptics = it)) } }
+            item { SwitchRow("Keypress sound", settings.keySound) { onUpdate(settings.copy(keySound = it)) } }
             item { Section("Sort notes") }
             item {
                 OptionRow(
@@ -173,12 +184,16 @@ private fun <T> OptionRow(
     onSelect: (T) -> Unit,
     label: (Pair<String, T>) -> String,
 ) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        options.forEach { opt ->
+    Row(
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        options.forEach { option ->
             OutlinedButton(
-                onClick = { onSelect(opt.second) },
-                enabled = opt.second != selected,
-            ) { Text(label(opt)) }
+                onClick = { if (option.second != selected) onSelect(option.second) },
+                enabled = true,
+                modifier = Modifier.semantics { this.selected = option.second == selected },
+            ) { Text(label(option)) }
         }
     }
 }
@@ -189,20 +204,47 @@ private fun Stepper(value: String, onMinus: () -> Unit, onPlus: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        OutlinedButton(onClick = onMinus) { Text("−") }
+        OutlinedButton(onClick = onMinus, modifier = Modifier.semantics { contentDescription = "Decrease" }) { Text("−") }
         Text(value, style = MaterialTheme.typography.titleMedium)
-        OutlinedButton(onClick = onPlus) { Text("+") }
+        OutlinedButton(onClick = onPlus, modifier = Modifier.semantics { contentDescription = "Increase" }) { Text("+") }
     }
+}
+
+@Composable
+private fun PersistedSlider(
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    label: String,
+    onCommit: (Float) -> Unit,
+) {
+    var draft by rememberSaveable(value) { mutableFloatStateOf(value) }
+    Slider(
+        value = draft,
+        onValueChange = { draft = it },
+        onValueChangeFinished = { onCommit(draft) },
+        valueRange = range,
+        modifier = Modifier.semantics {
+            contentDescription = label
+            stateDescription = draft.roundToInt().toString()
+        },
+    )
 }
 
 @Composable
 private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .toggleable(
+                value = checked,
+                role = Role.Switch,
+                onValueChange = onChange,
+            )
+            .semantics { role = Role.Switch },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Text(label)
-        Switch(checked = checked, onCheckedChange = onChange)
+        Switch(checked = checked, onCheckedChange = null)
     }
 }
