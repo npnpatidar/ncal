@@ -25,14 +25,15 @@ data class AppSettings(
     val haptics: Boolean = true,
     val keySound: Boolean = true,
     val noteSort: NoteSort = NoteSort.DATE,
+    val showMemoryRow: Boolean = false,
 ) {
     fun sanitized(): AppSettings = copy(
         decimals = decimals.coerceIn(0, 8),
         indent = indent.coerceIn(1, 8),
         tapeFontSp = tapeFontSp.takeIf { it.isFinite() }?.coerceIn(6f, 32f) ?: 16f,
         keyFontSp = keyFontSp.takeIf { it.isFinite() }?.coerceIn(12f, 28f) ?: 18f,
-        keyHeightPortDp = keyHeightPortDp.takeIf { it.isFinite() }?.coerceIn(48f, 80f) ?: 48f,
-        keyHeightLandDp = keyHeightLandDp.takeIf { it.isFinite() }?.coerceIn(48f, 64f) ?: 48f,
+        keyHeightPortDp = keyHeightPortDp.takeIf { it.isFinite() }?.coerceIn(24f, 80f) ?: 48f,
+        keyHeightLandDp = keyHeightLandDp.takeIf { it.isFinite() }?.coerceIn(24f, 64f) ?: 48f,
     )
 }
 
@@ -52,6 +53,7 @@ class SettingsStore(private val context: Context) {
             haptics = readBoolean(p, K_HAPTIC, true),
             keySound = readBoolean(p, K_SOUND, true),
             noteSort = enumOf<NoteSort>(p, K_SORT, NoteSort.DATE),
+            showMemoryRow = readBoolean(p, K_MEMORY, false),
         ).sanitized()
     }
 
@@ -70,6 +72,7 @@ class SettingsStore(private val context: Context) {
                 putBoolean(K_HAPTIC, s.haptics)
                 putBoolean(K_SOUND, s.keySound)
                 putString(K_SORT, s.noteSort.name)
+                putBoolean(K_MEMORY, s.showMemoryRow)
             }
         } catch (t: Throwable) {
             NcalLogger.e("Settings", "save failed", t)
@@ -119,5 +122,6 @@ class SettingsStore(private val context: Context) {
         private const val K_HAPTIC = "haptics"
         private const val K_SOUND = "key_sound"
         private const val K_SORT = "note_sort"
+        private const val K_MEMORY = "show_memory_row"
     }
 }

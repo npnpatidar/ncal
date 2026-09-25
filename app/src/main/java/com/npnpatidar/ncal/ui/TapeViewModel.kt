@@ -1115,6 +1115,8 @@ class TapeViewModel(app: Application) : AndroidViewModel(app) {
         haptics = if (requested.haptics != base.haptics) requested.haptics else current.haptics,
         keySound = if (requested.keySound != base.keySound) requested.keySound else current.keySound,
         noteSort = if (requested.noteSort != base.noteSort) requested.noteSort else current.noteSort,
+        showMemoryRow = if (requested.showMemoryRow != base.showMemoryRow) requested.showMemoryRow
+        else current.showMemoryRow,
     ).sanitized()
 
     private suspend fun saveSettings(settings: AppSettings) {

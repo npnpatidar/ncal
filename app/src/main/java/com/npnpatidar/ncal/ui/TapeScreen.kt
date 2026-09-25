@@ -45,6 +45,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -54,7 +55,6 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -348,15 +348,6 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
                     modifier = Modifier.fillMaxSize().padding(pad).padding(horizontal = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    // Notepad (editable area). Outside SYSTEM mode the field is
-                    // read-only AND detached from the input service, so tapping
-                    // it only moves the cursor — only ABC ever raises the
-                    // system keyboard. All input then comes from the keypad.
-                    Text(
-                        "notepad — op amount comment per line",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                     // Notepad. The cursor is drawn by hand (solid, always on —
                     // no blink cycle to miss) at the key/finger-driven offset.
                     // Tapping moves it freely; only ABC raises the keyboard.
@@ -628,17 +619,28 @@ fun TapeScreen(vm: TapeViewModel = viewModel()) {
     }
 }
 
-private const val KEYPAD_KEY_COUNT = 20
-private val keypadMinColumnWidth = 48.dp
-private val keypadSpacing = 6.dp
-
-private fun keypadColumnCount(width: Dp): Int {
-    if (!width.value.isFinite()) return KEYPAD_KEY_COUNT
-    return maxOf(
-        1,
-        ((width + keypadSpacing) / (keypadMinColumnWidth + keypadSpacing)).toInt(),
-    )
+@Composable
+private fun ModeButton(
+    text: String,
+    enabled: Boolean,
+    contentDescription: String? = null,
+    onClick: () -> Unit,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier.height(28.dp).semantics {
+            contentDescription?.let { this.contentDescription = it }
+        },
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+    ) { Text(text, style = MaterialTheme.typography.labelSmall) }
 }
+
+private const val KEYPAD_KEY_COUNT = 20
+private const val KEYPAD_PORTRAIT_COLUMNS = 4
+private const val KEYPAD_LANDSCAPE_COLUMNS = 10
+private val keypadMinKeyHeight = 24.dp
+private val keypadSpacing = 6.dp
 
 /**
  * Strip + calculator keypad pinned to the bottom of the screen. Sitting in
@@ -655,63 +657,28 @@ private fun BottomPinnedControls(vm: TapeViewModel, state: TapeUiState) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            OutlinedButton(
-                onClick = { vm.setKeypadMode(KeypadMode.CALC) },
-                enabled = state.keypadMode != KeypadMode.CALC,
-            ) { Text("Calc") }
-            OutlinedButton(
-                onClick = { vm.setKeypadMode(KeypadMode.SYSTEM) },
-                enabled = state.keypadMode != KeypadMode.SYSTEM,
-            ) { Text("ABC") }
-            OutlinedButton(
-                onClick = { vm.setKeypadMode(KeypadMode.HIDDEN) },
-                enabled = state.keypadMode != KeypadMode.HIDDEN,
-            ) { Text("Hide") }
-            OutlinedButton(
-                onClick = vm::redo,
-                enabled = state.canRedo,
-                modifier = Modifier.semantics { contentDescription = "Redo" },
-            ) { Text("Redo") }
+            ModeButton(text = "Calc", enabled = state.keypadMode != KeypadMode.CALC) {
+                vm.setKeypadMode(KeypadMode.CALC)
+            }
+            ModeButton(text = "ABC", enabled = state.keypadMode != KeypadMode.SYSTEM) {
+                vm.setKeypadMode(KeypadMode.SYSTEM)
+            }
+            ModeButton(text = "Hide", enabled = state.keypadMode != KeypadMode.HIDDEN) {
+                vm.setKeypadMode(KeypadMode.HIDDEN)
+            }
+            ModeButton(text = "Redo", enabled = state.canRedo, contentDescription = "Redo", onClick = vm::redo)
         }
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            OutlinedButton(
-                onClick = vm::memoryRecall,
-                modifier = Modifier.semantics { contentDescription = "Recall memory" },
-            ) { Text("MR") }
-            OutlinedButton(
-                onClick = vm::memoryAdd,
-                modifier = Modifier.semantics { contentDescription = "Add to memory" },
-            ) { Text("M+") }
-            OutlinedButton(
-                onClick = vm::memorySub,
-                modifier = Modifier.semantics { contentDescription = "Subtract from memory" },
-            ) { Text("M−") }
-            OutlinedButton(
-                onClick = vm::memoryClear,
-                modifier = Modifier.semantics { contentDescription = "Clear memory" },
-            ) { Text("MC") }
-            Text("M ${state.memoryText}", style = MaterialTheme.typography.bodySmall, maxLines = 1)
-            Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
-                Text(
-                    state.totalText,
-                    style = MaterialTheme.typography.headlineSmall,
-                    textAlign = TextAlign.End,
-                    maxLines = 1,
-                    modifier = Modifier.semantics {
-                        liveRegion = LiveRegionMode.Polite
-                        contentDescription = "Section total: ${state.totalText}"
-                    },
-                )
-                Text(
-                    "Grand ${state.grandText}",
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    modifier = Modifier.semantics { contentDescription = "Grand total: ${state.grandText}" },
-                )
+        if (st.showMemoryRow) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ModeButton(text = "MR", enabled = true, contentDescription = "Recall memory", onClick = vm::memoryRecall)
+                ModeButton(text = "M+", enabled = true, contentDescription = "Add to memory", onClick = vm::memoryAdd)
+                ModeButton(text = "M−", enabled = true, contentDescription = "Subtract from memory", onClick = vm::memorySub)
+                ModeButton(text = "MC", enabled = true, contentDescription = "Clear memory", onClick = vm::memoryClear)
+                Text("M ${state.memoryText}", style = MaterialTheme.typography.bodySmall, maxLines = 1)
             }
         }
 
@@ -725,20 +692,24 @@ private fun BottomPinnedControls(vm: TapeViewModel, state: TapeUiState) {
         // only when minimum targets or large text do not fit.
                     if (state.keypadMode == KeypadMode.CALC) {
                         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                            val columns = keypadColumnCount(maxWidth)
+                            val columns = if (landscape) KEYPAD_LANDSCAPE_COLUMNS else KEYPAD_PORTRAIT_COLUMNS
                             val rows = (KEYPAD_KEY_COUNT + columns - 1) / columns
                             val cap = maxHeight * 0.6f
                             val minimumKeyHeight = with(LocalDensity.current) {
                                 keyFont.toDp() + 4.dp
-                            }.coerceAtLeast(keypadMinColumnWidth)
+                            }.coerceAtLeast(keypadMinKeyHeight)
                             val fitted = ((cap - keypadSpacing * (rows - 1)) / rows)
                                 .coerceAtLeast(minimumKeyHeight)
                             val boundedKeyHeight = minOf(keyConfigured, fitted)
                                 .coerceAtLeast(minimumKeyHeight)
                             val keypadScrollable = boundedKeyHeight * rows +
                                 keypadSpacing * (rows - 1) > cap
-                            Box(modifier = Modifier.heightIn(max = cap)) {
+                            Box(
+                                modifier = Modifier.heightIn(max = cap).fillMaxWidth(),
+                                contentAlignment = Alignment.Center,
+                            ) {
                                 KeypadGrid(
+                                modifier = Modifier.fillMaxWidth(0.8f),
                                 onDigit = vm::key,
                                 onOp = vm::key,
                                 onEquals = vm::equals,
@@ -898,6 +869,7 @@ private fun Modifier.cursorDragFollow(
  */
 @Composable
 private fun KeypadGrid(
+    modifier: Modifier = Modifier,
     onDigit: (String) -> Unit,
     onOp: (String) -> Unit,
     onEquals: () -> Unit,
@@ -983,22 +955,29 @@ private fun KeypadGrid(
     )
     val keys = if (landscape) landscapeKeys else portraitKeys
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = keypadMinColumnWidth),
-        modifier = Modifier.fillMaxWidth(),
+        columns = GridCells.Fixed(if (landscape) KEYPAD_LANDSCAPE_COLUMNS else KEYPAD_PORTRAIT_COLUMNS),
+        modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(keypadSpacing),
         verticalArrangement = Arrangement.spacedBy(keypadSpacing),
         userScrollEnabled = userScrollEnabled,
     ) {
-        items(keys) { key ->
-            Button(
-                 onClick = { press(key.action) },
-                 enabled = key.enabled,
-                 modifier = Modifier
-                     .heightIn(min = maxOf(keyHeight, keypadMinColumnWidth))
-                     .semantics { contentDescription = key.description ?: key.label.orEmpty() },
-                contentPadding = PaddingValues(2.dp),
+    items(keys) { key ->
+            Surface(
+                onClick = { press(key.action) },
+                enabled = key.enabled,
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier
+                    .height(keyHeight)
+                    .semantics { contentDescription = key.description ?: key.label.orEmpty() },
             ) {
-                Text(key.label ?: "", fontSize = keyFontSp, lineHeight = keyFontSp, maxLines = 1)
+                Box(
+                    modifier = Modifier.padding(horizontal = 2.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(key.label ?: "", fontSize = keyFontSp, lineHeight = keyFontSp, maxLines = 1)
+                }
             }
         }
     }

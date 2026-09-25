@@ -13,6 +13,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -128,7 +129,7 @@ fun SettingsScreen(
             item {
                 PersistedSlider(
                     value = settings.keyHeightPortDp,
-                    range = 48f..80f,
+                    range = 24f..80f,
                     label = "Keyboard height portrait",
                     onCommit = { onUpdate(settings.copy(keyHeightPortDp = it)) },
                 )
@@ -137,13 +138,14 @@ fun SettingsScreen(
             item {
                 PersistedSlider(
                     value = settings.keyHeightLandDp,
-                    range = 48f..64f,
+                    range = 24f..64f,
                     label = "Keyboard height landscape",
                     onCommit = { onUpdate(settings.copy(keyHeightLandDp = it)) },
                 )
             }
             item { SwitchRow("Haptic feedback on keys", settings.haptics) { onUpdate(settings.copy(haptics = it)) } }
             item { SwitchRow("Keypress sound", settings.keySound) { onUpdate(settings.copy(keySound = it)) } }
+            item { SwitchRow("Memory buttons", settings.showMemoryRow) { onUpdate(settings.copy(showMemoryRow = it)) } }
             item { Section("Sort notes") }
             item {
                 OptionRow(
@@ -189,11 +191,21 @@ private fun <T> OptionRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         options.forEach { option ->
-            OutlinedButton(
-                onClick = { if (option.second != selected) onSelect(option.second) },
-                enabled = true,
-                modifier = Modifier.semantics { this.selected = option.second == selected },
-            ) { Text(label(option)) }
+            val isSelected = option.second == selected
+            val modifier = Modifier.semantics { this.selected = isSelected }
+            if (isSelected) {
+                Button(
+                    onClick = { },
+                    enabled = true,
+                    modifier = modifier,
+                ) { Text(label(option)) }
+            } else {
+                OutlinedButton(
+                    onClick = { onSelect(option.second) },
+                    enabled = true,
+                    modifier = modifier,
+                ) { Text(label(option)) }
+            }
         }
     }
 }
